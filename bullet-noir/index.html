@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bullet Noir Inspired</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="game-shell">
+      <canvas id="game" aria-label="Bullet Noir Inspired game"></canvas>
+
+      <section class="hud hud-top">
+        <div>
+          <span class="label">SCORE</span>
+          <strong id="score">0</strong>
+        </div>
+        <div>
+          <span class="label">WAVE</span>
+          <strong id="wave">1</strong>
+        </div>
+        <div>
+          <span class="label">TIME</span>
+          <strong id="time">00:00</strong>
+        </div>
+      </section>
+
+      <section class="hud hud-bottom">
+        <div class="meter">
+          <span class="label">FOCUS</span>
+          <span class="bar"><i id="focus"></i></span>
+        </div>
+      </section>
+
+      <section id="overlay" class="overlay">
+        <div>
+          <p class="kicker">ONE SHOT. ONE SHADOW.</p>
+          <h1>Bullet Noir</h1>
+          <p class="status" id="status">Click to begin</p>
+          <button id="restart" type="button" hidden>Restart</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="game.js"></script>
+  </body>
+</html>
