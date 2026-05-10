@@ -44,6 +44,10 @@
       TOTAL_MEMORY: 268435456,
       arguments: ["-main_pack", "data.pck"],
       canvas: document.getElementById("canvas"),
+      preRun: [function() {
+        Module.setStatus("Loading game pack...");
+        FS.createPreloadedFile("/", "data.pck", "data.pck", true, false);
+      }],
       print: function(text) {
         console.log(text);
       },
