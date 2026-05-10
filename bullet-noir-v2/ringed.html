@@ -129,6 +129,13 @@
     let audioCtx = null;
     let noirGain = null;
     let noirPulseTimer = null;
+    const audioBuffers = {};
+    const audioSampleSources = {
+      playerGun: "audio/samples/gun1.wav",
+      enemyGun: "audio/samples/gun2.wav",
+      flamer: "audio/samples/bomb.wav",
+      death: "audio/samples/enemy_die_1.wav"
+    };
     const sfx = {};
 
     const world = { w: 2200, h: 1600 };
@@ -289,18 +296,24 @@
       }
       audioReady = true;
       try {
-        sfx.playerGun = makeAudio("audio/samples/gun1.wav", 0.28);
-        sfx.enemyGun = makeAudio("audio/samples/gun2.wav", 0.2);
-        sfx.flamer = makeAudio("audio/samples/bomb.wav", 0.08);
-        sfx.death = makeAudio("audio/samples/enemy_die_1.wav", 0.18);
+        sfx.playerGun = makeAudio(audioSampleSources.playerGun, 0.28);
+        sfx.enemyGun = makeAudio(audioSampleSources.enemyGun, 0.2);
+        sfx.flamer = makeAudio(audioSampleSources.flamer, 0.08);
+        sfx.death = makeAudio(audioSampleSources.death, 0.18);
       } catch (error) {
         console.warn("Audio init failed", error);
       }
       startNoirBgm();
+      loadAudioBuffers();
       unlockAudio();
     }
 
     function detectMobileDevice() {
+      try {
+        const params = new URLSearchParams(window.location.search || "");
+        if (params.get("mobile") === "1") return true;
+        if (params.get("mobile") === "0") return false;
+      } catch (error) {}
       const touchPoints = navigator.maxTouchPoints || navigator.msMaxTouchPoints || 0;
       if (touchPoints <= 0) return false;
       const ua = navigator.userAgent || "";
@@ -320,7 +333,7 @@
     function playSfx(name, rate = 1) {
       unlockAudio();
       const sound = sfx[name];
-      playSynthSfx(name, rate);
+      if (playBufferSfx(name, rate)) return;
       if (!sound) return;
       try {
         const clone = sound.cloneNode();
@@ -329,6 +342,42 @@
         clone.play().catch(() => {});
       } catch (error) {
         // Sound is optional; gameplay should never fail because of audio.
+      }
+    }
+
+    function loadAudioBuffers() {
+      if (!audioCtx || !window.fetch) return;
+      for (const [name, src] of Object.entries(audioSampleSources)) {
+        if (audioBuffers[name] || audioBuffers[name + "Loading"]) continue;
+        audioBuffers[name + "Loading"] = true;
+        fetch(src)
+          .then((response) => response.arrayBuffer())
+          .then((data) => audioCtx.decodeAudioData(data))
+          .then((buffer) => {
+            audioBuffers[name] = buffer;
+          })
+          .catch(() => {
+            audioBuffers[name + "Failed"] = true;
+          });
+      }
+    }
+
+    function playBufferSfx(name, rate = 1) {
+      try {
+        const buffer = audioBuffers[name];
+        if (!audioCtx || !buffer || audioCtx.state === "suspended") return false;
+        const source = audioCtx.createBufferSource();
+        const gain = audioCtx.createGain();
+        source.buffer = buffer;
+        source.playbackRate.value = rate;
+        const volume = name === "playerGun" ? 0.32 : name === "enemyGun" ? 0.24 : name === "death" ? 0.22 : 0.14;
+        gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+        source.connect(gain);
+        gain.connect(audioCtx.destination);
+        source.start(audioCtx.currentTime);
+        return true;
+      } catch (error) {
+        return false;
       }
     }
 
@@ -653,6 +702,7 @@
       raidAlarmTimer = 0;
       lastIdleX = player.x;
       lastIdleY = player.y;
+      if (isMobile) initMobileAimCursor();
 
       buildFacilityMap();
       if (!usingCustomMap) {
@@ -681,8 +731,7 @@
       mobileControls.moveY = 0;
       mobileControls.aimKnobX = 0;
       mobileControls.aimKnobY = 0;
-      mobileControls.aimScreenX = 0;
-      mobileControls.aimScreenY = 0;
+      if (isMobile) initMobileAimCursor();
       raidWarningActive = false;
       raidAlarmTimer = 0;
     }
@@ -1466,7 +1515,7 @@
       let aimTarget = currentAimTarget(worldMouse);
       player.angle = Math.atan2(aimTarget.y - player.y, aimTarget.x - player.x);
       updateCamera(dt, isMobile ? aimTarget : worldMouse);
-      if (isMobile && mobileControls.shoot) {
+      if (isMobile) {
         aimTarget = mobileAimWorldTarget();
         player.angle = Math.atan2(aimTarget.y - player.y, aimTarget.x - player.x);
       }
@@ -1896,16 +1945,21 @@
 
     function currentAimTarget(worldMouse) {
       if (!isMobile) return worldMouse;
-      if (mobileControls.shoot) return mobileAimWorldTarget();
-      return { x: player.x + Math.cos(player.angle) * 260, y: player.y + Math.sin(player.angle) * 260 };
+      return mobileAimWorldTarget();
     }
 
     function mobileAimWorldTarget() {
       if (!mobileControls.aimScreenX && !mobileControls.aimScreenY) {
-        initMobileAimCursorFromDirection(Math.cos(player.angle || 0), Math.sin(player.angle || 0));
+        initMobileAimCursor();
       }
       syncMobileAimWorld();
       return screenToWorld(mobileControls.aimScreenX, mobileControls.aimScreenY);
+    }
+
+    function initMobileAimCursor() {
+      mobileControls.aimScreenX = clamp(width * 0.62, 18, width - 18);
+      mobileControls.aimScreenY = clamp(height * 0.46, 18, height - 18);
+      syncMobileAimWorld();
     }
 
     function initMobileAimCursorFromDirection(dirX, dirY) {
@@ -2671,6 +2725,7 @@
       ctx.setTransform(scale, 0, 0, scale, 0, 0);
       drawRaidWarningOverlay();
       drawHud();
+      if (isMobile) drawMobileAimCursor();
       if (isMobile) drawMobileControls();
     }
 
@@ -3368,6 +3423,10 @@
       ctx.moveTo(aimRay.x1, aimRay.y1);
       ctx.lineTo(aimRay.x2, aimRay.y2);
       ctx.stroke();
+      if (isMobile) {
+        ctx.restore();
+        return;
+      }
       const marker = mobileAimMarkerWorld();
       ctx.globalCompositeOperation = "source-over";
       ctx.strokeStyle = "rgba(255,255,255,0.86)";
@@ -3393,6 +3452,30 @@
         return screenToWorld(mobileControls.aimScreenX, mobileControls.aimScreenY);
       }
       return { x: aimRay.x2, y: aimRay.y2 };
+    }
+
+    function drawMobileAimCursor() {
+      if (!mobileControls.aimScreenX && !mobileControls.aimScreenY) initMobileAimCursor();
+      const x = mobileControls.aimScreenX;
+      const y = mobileControls.aimScreenY;
+      ctx.save();
+      ctx.globalCompositeOperation = "source-over";
+      ctx.strokeStyle = mobileControls.shoot ? "rgba(255,255,255,0.96)" : "rgba(255,255,255,0.58)";
+      ctx.lineWidth = mobileControls.shoot ? 2.2 : 1.6;
+      ctx.beginPath();
+      ctx.moveTo(x - 12, y);
+      ctx.lineTo(x - 4, y);
+      ctx.moveTo(x + 4, y);
+      ctx.lineTo(x + 12, y);
+      ctx.moveTo(x, y - 12);
+      ctx.lineTo(x, y - 4);
+      ctx.moveTo(x, y + 4);
+      ctx.lineTo(x, y + 12);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x, y, 5.5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
     }
 
     function drawParticles() {
@@ -3974,8 +4057,6 @@
         mobileControls.shoot = false;
         mobileControls.aimKnobX = 0;
         mobileControls.aimKnobY = 0;
-        mobileControls.aimScreenX = 0;
-        mobileControls.aimScreenY = 0;
         mobileControls.aimTouchX = 0;
         mobileControls.aimTouchY = 0;
       }
