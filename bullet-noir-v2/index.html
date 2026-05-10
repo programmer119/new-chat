@@ -81,8 +81,10 @@
     let width = 0;
     let height = 0;
     let scale = 1;
-    let state = "menu";
+    let state = "intro";
     let last = performance.now();
+    let introTimer = 0;
+    let introSoundStarted = false;
     let shootCooldown = 0;
     let bombCooldown = 0;
     let spawnTimer = 0;
@@ -144,6 +146,7 @@
       targetAngle: 0,
       moveX: 0,
       moveY: 0,
+      isMoving: false,
       invuln: 0,
       dodge: 0
     };
@@ -197,7 +200,7 @@
         handleMapToolKey(event);
         return;
       }
-      if (event.code === "Enter" && state !== "play") startGame();
+      if (event.code === "Enter" && state === "menu") startGame();
       if (event.code === "Escape" && state === "play") goMainMenu();
       if (event.code === "Digit1") cameraMode = 1;
       if (event.code === "Digit2") cameraMode = 2;
@@ -224,7 +227,7 @@
       if (handleCameraButtonClick(mouse.x, mouse.y)) return;
       if (event.button === 2) mouse.right = true;
       else mouse.down = true;
-      if (state !== "play") startGame();
+      if (state === "menu" || state === "dead") startGame();
     });
     window.addEventListener("mouseup", (event) => {
       if (state === "maptool") {
@@ -324,14 +327,65 @@
       osc.stop(audioCtx.currentTime + 0.26);
     }
 
+    function playParkLogoSound() {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!audioCtx && Ctx) {
+        audioCtx = new Ctx();
+      }
+      if (!audioCtx) return;
+      audioCtx.resume && audioCtx.resume();
+      const now = audioCtx.currentTime;
+      const impacts = [0.52, 1.08, 1.64, 2.2];
+      for (const [i, offset] of impacts.entries()) {
+        const osc = audioCtx.createOscillator();
+        const grind = audioCtx.createOscillator();
+        const servo = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        const grindGain = audioCtx.createGain();
+        const servoGain = audioCtx.createGain();
+        osc.type = "sawtooth";
+        grind.type = "square";
+        servo.type = "triangle";
+        osc.frequency.setValueAtTime(78 - i * 5, now + offset);
+        osc.frequency.exponentialRampToValueAtTime(24, now + offset + 0.36);
+        grind.frequency.setValueAtTime(360 + i * 42, now + offset);
+        grind.frequency.exponentialRampToValueAtTime(74, now + offset + 0.2);
+        servo.frequency.setValueAtTime(760 - i * 60, now + offset - 0.07);
+        servo.frequency.exponentialRampToValueAtTime(190, now + offset + 0.1);
+        gain.gain.setValueAtTime(0.0001, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.18, now + offset + 0.008);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.42);
+        grindGain.gain.setValueAtTime(0.0001, now + offset);
+        grindGain.gain.exponentialRampToValueAtTime(0.075, now + offset + 0.008);
+        grindGain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.24);
+        servoGain.gain.setValueAtTime(0.0001, now + offset - 0.07);
+        servoGain.gain.exponentialRampToValueAtTime(0.035, now + offset - 0.02);
+        servoGain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.14);
+        osc.connect(gain);
+        grind.connect(grindGain);
+        servo.connect(servoGain);
+        gain.connect(audioCtx.destination);
+        grindGain.connect(audioCtx.destination);
+        servoGain.connect(audioCtx.destination);
+        osc.start(now + offset);
+        grind.start(now + offset);
+        servo.start(now + offset - 0.07);
+        osc.stop(now + offset + 0.44);
+        grind.stop(now + offset + 0.26);
+        servo.stop(now + offset + 0.15);
+      }
+    }
+
     function startNoirBgm() {
       if (audioCtx) {
         audioCtx.resume && audioCtx.resume();
-        return;
+        if (noirGain) return;
       }
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return;
-      audioCtx = new Ctx();
+      if (!audioCtx) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        audioCtx = new Ctx();
+      }
       noirGain = audioCtx.createGain();
       noirGain.gain.value = 0.018;
       noirGain.connect(audioCtx.destination);
@@ -357,6 +411,7 @@
       player.targetAngle = 0;
       player.moveX = 0;
       player.moveY = 0;
+      player.isMoving = false;
       player.invuln = 0;
       player.dodge = 0;
       bullets.length = 0;
@@ -1129,6 +1184,18 @@
     }
 
     function update(dt) {
+      if (state === "intro") {
+        introTimer += dt;
+        if (!introSoundStarted) {
+          introSoundStarted = true;
+          playParkLogoSound();
+        }
+        if (introTimer >= 5) {
+          state = "menu";
+          gameOverTimer = 0;
+        }
+        return;
+      }
       if (state === "maptool") {
         mapTool.statusTime = Math.max(0, mapTool.statusTime - dt);
         return;
@@ -1179,6 +1246,9 @@
       const beforePlayerX = player.x;
       const beforePlayerY = player.y;
       moveCircle(player, mx * speed * dt, my * speed * dt);
+      player.moveX = mx;
+      player.moveY = my;
+      player.isMoving = Math.hypot(player.x - beforePlayerX, player.y - beforePlayerY) > 0.35;
       updateDoors(dt);
       updateIdleRaid(dt, Math.hypot(player.x - beforePlayerX, player.y - beforePlayerY), mouse.down || mouse.right || keys.has("KeyQ"));
 
@@ -2007,11 +2077,164 @@
     function draw() {
       ctx.save();
       ctx.clearRect(0, 0, width, height);
-      if (state === "menu") drawMenu();
+      if (state === "intro") drawIntroLogo();
+      else if (state === "menu") drawMenu();
       else if (state === "maptool") drawMapTool();
       else {
         drawGame();
         if (state === "dead") drawDeath();
+      }
+      ctx.restore();
+    }
+
+    function drawIntroLogo() {
+      const t = clamp(introTimer, 0, 5);
+      const dissolve = clamp((t - 4.15) / 0.85, 0, 1);
+      ctx.save();
+      if (dissolve > 0) drawMenu();
+      const fadeOut = 1 - dissolve;
+      const shake = introShakeAmount(t);
+      ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake * 0.65);
+      ctx.globalAlpha = fadeOut;
+      const bg = ctx.createLinearGradient(0, 0, 0, height);
+      bg.addColorStop(0, "#07090c");
+      bg.addColorStop(0.52, "#12161b");
+      bg.addColorStop(1, "#08090b");
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, width, height);
+      drawIntroFloor();
+      const centerX = width / 2;
+      const baseY = height * 0.48;
+      const size = Math.min(86, Math.max(52, width * 0.13));
+      const spacing = size * 0.82;
+      const letters = "PARK";
+      const impactTimes = [0.52, 1.08, 1.64, 2.2];
+      for (let i = 0; i < letters.length; i++) {
+        const x = centerX + (i - 1.5) * spacing;
+        const local = t - impactTimes[i];
+        const targetY = baseY + Math.sin(i * 1.7) * 4;
+        const startY = -size * 1.6 - i * 28;
+        const fallStart = impactTimes[i] - 0.72;
+        const fallTime = Math.max(0, t - fallStart);
+        const duration = impactTimes[i] - fallStart;
+        const gravityProgress = clamp((fallTime / duration) * (fallTime / duration), 0, 1);
+        const bounce = local > 0 && local < 0.3 ? -Math.sin(local / 0.3 * Math.PI) * 16 * (1 - local / 0.3) : 0;
+        const y = startY + (targetY - startY) * gravityProgress + bounce;
+        if (t >= fallStart) drawStoneLetter(letters[i], x, y, size, i, gravityProgress);
+        if (local > 0) drawImpactMark(x, targetY + size * 0.48, size, local, i);
+      }
+      const yearAlpha = clamp((t - 3.25) / 1.15, 0, 1);
+      if (yearAlpha > 0) {
+        ctx.globalAlpha = yearAlpha;
+        ctx.fillStyle = "rgba(215, 219, 215, 0.88)";
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.65)";
+        ctx.lineWidth = 3;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = "800 " + Math.round(size * 0.38) + "px Arial Black, Impact, Arial";
+        ctx.strokeText("2026", centerX, baseY + size * 1.05);
+        ctx.fillText("2026", centerX, baseY + size * 1.05);
+        ctx.globalAlpha = 1;
+      }
+      if (dissolve > 0) drawDissolveGrain(dissolve);
+      ctx.restore();
+    }
+
+    function introShakeAmount(t) {
+      const impacts = [0.52, 1.08, 1.64, 2.2];
+      let amount = 0;
+      for (const impact of impacts) {
+        const local = t - impact;
+        if (local >= 0 && local < 0.34) amount += Math.sin((1 - local / 0.34) * Math.PI) * (18 * (1 - local / 0.34));
+      }
+      return amount;
+    }
+
+    function drawDissolveGrain(amount) {
+      ctx.save();
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.fillStyle = "rgba(0,0,0," + (0.22 + amount * 0.42) + ")";
+      const cell = 18;
+      for (let y = 0; y < height; y += cell) {
+        for (let x = 0; x < width; x += cell) {
+          const n = Math.sin(x * 12.9898 + y * 78.233 + 13.7) * 43758.5453;
+          const v = n - Math.floor(n);
+          if (v < amount) ctx.fillRect(x, y, cell + 1, cell + 1);
+        }
+      }
+      ctx.restore();
+    }
+
+    function drawIntroFloor() {
+      ctx.save();
+      ctx.fillStyle = "rgba(255,255,255,0.025)";
+      const tile = Math.max(42, Math.min(78, width * 0.1));
+      for (let y = height * 0.38; y < height; y += tile) {
+        for (let x = 0; x < width; x += tile) {
+          if (((x / tile) + (y / tile)) % 2 > 0.5) ctx.fillRect(x, y, tile, tile);
+        }
+      }
+      const vignette = ctx.createRadialGradient(width / 2, height * 0.46, 10, width / 2, height * 0.46, Math.max(width, height) * 0.72);
+      vignette.addColorStop(0, "rgba(120,130,140,0.16)");
+      vignette.addColorStop(0.58, "rgba(0,0,0,0.1)");
+      vignette.addColorStop(1, "rgba(0,0,0,0.82)");
+      ctx.fillStyle = vignette;
+      ctx.fillRect(0, 0, width, height);
+      ctx.restore();
+    }
+
+    function drawStoneLetter(letter, x, y, size, index, drop) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate((index - 1.5) * 0.035 * (1 - drop));
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "900 " + Math.round(size) + "px Arial Black, Impact, Arial";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = Math.max(5, size * 0.1);
+      ctx.strokeStyle = "rgba(0,0,0,0.88)";
+      ctx.strokeText(letter, 0, 0);
+      const g = ctx.createLinearGradient(-size * 0.4, -size * 0.6, size * 0.45, size * 0.55);
+      g.addColorStop(0, "#d3d2c8");
+      g.addColorStop(0.42, "#868981");
+      g.addColorStop(1, "#3b3e3b");
+      ctx.fillStyle = g;
+      ctx.fillText(letter, 0, 0);
+      ctx.strokeStyle = "rgba(255,255,255,0.22)";
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.28, -size * 0.22);
+      ctx.lineTo(size * 0.18, -size * 0.34);
+      ctx.moveTo(-size * 0.1, size * 0.08);
+      ctx.lineTo(size * 0.28, size * 0.18);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawImpactMark(x, y, size, local, index) {
+      const a = clamp(1 - local / 1.55, 0, 1);
+      if (a <= 0) return;
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.strokeStyle = "rgba(196, 198, 188, 0.58)";
+      ctx.lineWidth = 1.7;
+      for (let i = 0; i < 9; i++) {
+        const angle = (Math.PI * 2 / 9) * i + index * 0.33;
+        const len = size * (0.26 + 0.32 * ((i % 4) / 3)) * clamp(local / 0.18, 0, 1);
+        ctx.beginPath();
+        ctx.moveTo(x + Math.cos(angle) * size * 0.12, y + Math.sin(angle) * size * 0.05);
+        ctx.lineTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len * 0.46);
+        ctx.stroke();
+      }
+      ctx.fillStyle = "rgba(202, 198, 184, 0.28)";
+      for (let i = 0; i < 15; i++) {
+        const dustT = clamp(local / 0.82, 0, 1);
+        const spread = (i - 7) * size * 0.105 * (0.8 + dustT);
+        const dx = spread + Math.sin(i * 2.4) * size * 0.03;
+        const dy = -Math.sin(dustT * Math.PI) * (16 + (i % 4) * 6);
+        ctx.beginPath();
+        ctx.arc(x + dx, y + dy, size * (0.032 + (i % 3) * 0.012) * (1 - dustT * 0.35), 0, Math.PI * 2);
+        ctx.fill();
       }
       ctx.restore();
     }
@@ -2784,6 +3007,7 @@
 
     function drawAimLaser() {
       if (!aimRay) return;
+      if (!player.isMoving) return;
       ctx.save();
       ctx.lineCap = "round";
       ctx.globalCompositeOperation = "lighter";
@@ -3219,14 +3443,17 @@
     }
 
     function mobileButtonRects() {
-      const base = Math.min(74, Math.max(58, width * 0.14));
-      const gap = 14;
-      const bottom = height - 34;
+      const base = Math.min(66, Math.max(54, width * 0.12));
+      const gap = Math.max(12, base * 0.18);
+      const safeRight = 22;
+      const attackR = Math.min(58, Math.max(52, width * 0.105));
+      const attackY = height - 112;
+      const actionX = width - safeRight - base;
       return {
         stick: { x: 88, y: height - 112, r: 58 },
-        attack: { x: width - 88, y: height - 112, r: 58 },
-        bomb: { id: "bomb", label: "BOMB", x: width - base * 2 - gap - 24, y: bottom - base + 8, w: base, h: base },
-        dodge: { id: "dodge", label: "DASH", x: width - base - 48, y: bottom - base * 2 - gap, w: base * 0.9, h: base * 0.9 }
+        attack: { x: width - 88, y: attackY, r: attackR },
+        bomb: { id: "bomb", label: "BOMB", x: actionX, y: attackY - attackR - gap - base, w: base, h: base },
+        dodge: { id: "dodge", label: "DASH", x: actionX, y: attackY - attackR - gap * 2 - base * 2, w: base, h: base }
       };
     }
 
@@ -3344,9 +3571,10 @@
           startGame();
           return;
         }
-        if (state !== "play") continue;
-        if (handleGameMenuButtonClick(p.x, p.y)) return;
-        const action = mobileActionAt(p.x, p.y);
+      if (state !== "play") continue;
+      if (handleGameMenuButtonClick(p.x, p.y)) return;
+      if (handleSpecialForcesToggleClick(p.x, p.y)) return;
+      const action = mobileActionAt(p.x, p.y);
         if (action === "bomb") {
           mobileControls.bomb = true;
         } else if (action === "dodge") {
@@ -3905,6 +4133,9 @@
       const savedBlastLights = blastLights.slice();
       const savedFizzles = fizzles.slice();
       const savedFlameBursts = flameBursts.slice();
+      const savedState = state;
+      const savedIntroTimer = introTimer;
+      const savedIntroSoundStarted = introSoundStarted;
       try {
         walls.length = 0;
         doors.length = 0;
@@ -4100,6 +4331,21 @@
         player.y = 130;
         moveCircle(player, 0, 46);
         const narrowCornerFloorPasses = player.y > 160;
+        const mobileRects = mobileButtonRects();
+        const mobileActionsClearAttackStick =
+          !circleRect(mobileRects.attack.x, mobileRects.attack.y, mobileRects.attack.r + 8, mobileRects.bomb) &&
+          !circleRect(mobileRects.attack.x, mobileRects.attack.y, mobileRects.attack.r + 8, mobileRects.dodge);
+        specialForcesEnabled = false;
+        const mobileSpecialToggleWorks = handleSpecialForcesToggleClick(
+          specialForcesToggleRect().x + 18,
+          specialForcesToggleRect().y + 16
+        ) && specialForcesEnabled === true;
+        specialForcesEnabled = false;
+        state = "intro";
+        introTimer = 4.99;
+        introSoundStarted = true;
+        update(0.02);
+        const introCompletesToMenu = state === "menu";
         player.x = savedPlayer.x;
         player.y = savedPlayer.y;
         player.collisionR = savedPlayer.collisionR;
@@ -4153,7 +4399,10 @@
           doorSnapsToWall,
           doorCarvesWall,
           smoothTurnMovesPartway,
-          narrowCornerFloorPasses
+          narrowCornerFloorPasses,
+          mobileActionsClearAttackStick,
+          mobileSpecialToggleWorks,
+          introCompletesToMenu
         };
       } finally {
         walls.length = 0;
@@ -4180,6 +4429,9 @@
         for (const light of savedBlastLights) blastLights.push(light);
         for (const fizzle of savedFizzles) fizzles.push(fizzle);
         for (const flame of savedFlameBursts) flameBursts.push(flame);
+        state = savedState;
+        introTimer = savedIntroTimer;
+        introSoundStarted = savedIntroSoundStarted;
       }
     }
 
