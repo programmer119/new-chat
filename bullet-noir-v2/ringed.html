@@ -84,6 +84,7 @@
     let state = "intro";
     let last = performance.now();
     let introTimer = 0;
+    let introStarted = false;
     let introSoundStarted = false;
     let shootCooldown = 0;
     let bombCooldown = 0;
@@ -200,6 +201,11 @@
         handleMapToolKey(event);
         return;
       }
+      if (state === "intro" && (event.code === "Enter" || event.code === "Space")) {
+        event.preventDefault();
+        startIntroSequence();
+        return;
+      }
       if (event.code === "Enter" && state === "menu") startGame();
       if (event.code === "Escape" && state === "play") goMainMenu();
       if (event.code === "Digit1") cameraMode = 1;
@@ -216,6 +222,10 @@
       const rect = canvas.getBoundingClientRect();
       mouse.x = event.clientX - rect.left;
       mouse.y = event.clientY - rect.top;
+      if (state === "intro") {
+        startIntroSequence();
+        return;
+      }
       if (state === "menu" && handleMenuClick(mouse.x, mouse.y)) return;
       if (state === "maptool") {
         handleMapToolMouseDown(event);
@@ -373,6 +383,44 @@
         osc.stop(now + offset + 0.44);
         grind.stop(now + offset + 0.26);
         servo.stop(now + offset + 0.15);
+      }
+      playParkVoiceCue(now + 2.65);
+    }
+
+    function playParkVoiceCue(when) {
+      try {
+        if (window.speechSynthesis && window.SpeechSynthesisUtterance) {
+          const utterance = new SpeechSynthesisUtterance("박가");
+          utterance.lang = "ko-KR";
+          utterance.rate = 0.82;
+          utterance.pitch = 0.45;
+          utterance.volume = 0.9;
+          setTimeout(() => window.speechSynthesis.speak(utterance), Math.max(0, (when - audioCtx.currentTime) * 1000));
+        }
+      } catch (error) {}
+      const syllables = [0, 0.28];
+      for (const [i, offset] of syllables.entries()) {
+        const osc = audioCtx.createOscillator();
+        const mod = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        const modGain = audioCtx.createGain();
+        osc.type = "sawtooth";
+        mod.type = "triangle";
+        osc.frequency.setValueAtTime(i === 0 ? 142 : 118, when + offset);
+        osc.frequency.exponentialRampToValueAtTime(i === 0 ? 82 : 74, when + offset + 0.18);
+        mod.frequency.setValueAtTime(i === 0 ? 58 : 46, when + offset);
+        gain.gain.setValueAtTime(0.0001, when + offset);
+        gain.gain.exponentialRampToValueAtTime(0.055, when + offset + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.0001, when + offset + 0.22);
+        modGain.gain.value = 0.012;
+        mod.connect(modGain);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        modGain.connect(audioCtx.destination);
+        osc.start(when + offset);
+        mod.start(when + offset);
+        osc.stop(when + offset + 0.24);
+        mod.stop(when + offset + 0.24);
       }
     }
 
@@ -1185,6 +1233,7 @@
 
     function update(dt) {
       if (state === "intro") {
+        if (!introStarted) return;
         introTimer += dt;
         if (!introSoundStarted) {
           introSoundStarted = true;
@@ -1447,6 +1496,15 @@
           gameOverTimer = 0;
         }
       }
+    }
+
+    function startIntroSequence() {
+      if (introStarted) return;
+      introStarted = true;
+      introTimer = 0;
+      introSoundStarted = false;
+      playParkLogoSound();
+      introSoundStarted = true;
     }
 
     function enemyFlame(enemy, dx, dy) {
@@ -2103,6 +2161,18 @@
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, width, height);
       drawIntroFloor();
+      if (!introStarted) {
+        ctx.fillStyle = "rgba(225, 224, 215, 0.9)";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = "800 " + Math.round(Math.min(28, Math.max(18, width * 0.035))) + "px Arial";
+        ctx.fillText("CLICK / TAP TO START", width / 2, height * 0.7);
+        ctx.font = "600 " + Math.round(Math.min(15, Math.max(12, width * 0.022))) + "px Arial";
+        ctx.fillStyle = "rgba(170, 174, 172, 0.78)";
+        ctx.fillText("sound enabled intro", width / 2, height * 0.7 + 30);
+        ctx.restore();
+        return;
+      }
       const centerX = width / 2;
       const baseY = height * 0.48;
       const size = Math.min(86, Math.max(52, width * 0.13));
@@ -2240,31 +2310,37 @@
     }
 
     function drawMenu() {
-      if (assets.bg) drawCover(assets.bg, 0, 0, width, height);
-      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      const bg = ctx.createLinearGradient(0, 0, 0, height);
+      bg.addColorStop(0, "#080a0d");
+      bg.addColorStop(0.55, "#11151a");
+      bg.addColorStop(1, "#050607");
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = "rgba(255,255,255,0.025)";
+      const tile = 74;
+      for (let y = 0; y < height; y += tile) {
+        for (let x = 0; x < width; x += tile) {
+          if (((x / tile) + (y / tile)) % 2 > 0.5) ctx.fillRect(x, y, tile, tile);
+        }
+      }
+      const vignette = ctx.createRadialGradient(width / 2, height * 0.36, 20, width / 2, height * 0.46, Math.max(width, height) * 0.72);
+      vignette.addColorStop(0, "rgba(180,185,180,0.12)");
+      vignette.addColorStop(0.52, "rgba(0,0,0,0.08)");
+      vignette.addColorStop(1, "rgba(0,0,0,0.78)");
+      ctx.fillStyle = vignette;
       ctx.fillRect(0, 0, width, height);
       ctx.fillStyle = "#e8e3d6";
       ctx.textAlign = "center";
       ctx.font = "700 56px Arial";
       ctx.fillText("SANG SUB", width / 2, height * 0.28);
-      if (assets.logo) {
-        const lw = Math.min(300, width * 0.42);
-        ctx.drawImage(assets.logo, width / 2 - lw / 2, height * 0.33, lw, lw * assets.logo.height / assets.logo.width);
-      }
-      ctx.font = "18px Arial";
-      ctx.fillStyle = "#cfc7b3";
-      ctx.fillText("WASD move  |  Shift sprint  |  Space dodge  |  Mouse shoot", width / 2, height * 0.62);
       ctx.fillStyle = "#f1d477";
       ctx.font = "700 24px Arial";
-      ctx.fillText("Click or press Enter to play", width / 2, height * 0.7);
+      ctx.fillText("Click or press Enter to play", width / 2, height * 0.58);
       drawMenuButton(menuMapToolButton(), "MAP TOOL", false);
-      ctx.font = "13px Arial";
-      ctx.fillStyle = "#8f8a7e";
-      ctx.fillText("Web build normalized without the legacy Godot 2 asm.js loader.", width / 2, height - 28);
     }
 
     function menuMapToolButton() {
-      return { x: width / 2 - 86, y: height * 0.75, w: 172, h: 42 };
+      return { x: width / 2 - 86, y: height * 0.64, w: 172, h: 42 };
     }
 
     function drawMenuButton(rect, label, active) {
@@ -3566,6 +3642,10 @@
       updateTouchPositions(event);
       for (const touch of event.changedTouches) {
         const p = touchPoint(touch);
+        if (state === "intro") {
+          startIntroSequence();
+          return;
+        }
         if (state === "menu") {
           if (handleMenuClick(p.x, p.y)) return;
           startGame();
@@ -4135,6 +4215,7 @@
       const savedFlameBursts = flameBursts.slice();
       const savedState = state;
       const savedIntroTimer = introTimer;
+      const savedIntroStarted = introStarted;
       const savedIntroSoundStarted = introSoundStarted;
       try {
         walls.length = 0;
@@ -4343,6 +4424,7 @@
         specialForcesEnabled = false;
         state = "intro";
         introTimer = 4.99;
+        introStarted = true;
         introSoundStarted = true;
         update(0.02);
         const introCompletesToMenu = state === "menu";
@@ -4431,6 +4513,7 @@
         for (const flame of savedFlameBursts) flameBursts.push(flame);
         state = savedState;
         introTimer = savedIntroTimer;
+        introStarted = savedIntroStarted;
         introSoundStarted = savedIntroSoundStarted;
       }
     }
