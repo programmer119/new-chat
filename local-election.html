@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PublicFit | Korean local election candidate comparison</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">PublicFit</p>
+        <h1>&#54620;&#44397; &#51648;&#48169;&#49440;&#44144; &#54980;&#48372;&#47484; &#45236; &#44592;&#51456;&#44284; &#44277;&#44277;&#44592;&#47197;&#51004;&#47196; &#48708;&#44368;&#54633;&#45768;&#45796;</h1>
+      </div>
+      <div class="district-picker" aria-label="Election area selection">
+        <span>&#49440;&#44144;</span>
+        <strong>2026 &#51228;9&#54924; &#51648;&#48169;&#49440;&#44144;</strong>
+      </div>
+    </header>
+
+    <main>
+      <section class="api-panel" aria-labelledby="api-title">
+        <div>
+          <p class="eyebrow">Live data</p>
+          <h2 id="api-title">&#54856;&#50640; &#51200;&#51109;&#54620; API &#53412;&#47484; &#49324;&#50857;&#54633;&#45768;&#45796;</h2>
+          <p class="api-copy">
+            &#54856;&#50640;&#49436; ServiceKey&#47484; &#51200;&#51109;&#54616;&#47732; &#54788;&#51116; &#49440;&#53469;&#54620; &#49440;&#52636;&#51649;/&#51648;&#50669; &#44592;&#51456;&#51004;&#47196; &#49892;&#51228; &#54980;&#48372;&#51088; &#51221;&#48372;&#47484; &#51088;&#46041; &#51312;&#54924;&#54633;&#45768;&#45796;.
+          </p>
+        </div>
+        <div class="api-controls">
+          <label for="sgIdInput">선거ID</label>
+          <input id="apiKey" type="hidden" autocomplete="off" />
+          <input id="sgIdInput" type="text" value="20260603" aria-label="선거ID" />
+          <button class="ghost-button" id="loadApiCandidates" type="button">API 조회</button>
+          <a class="ghost-link" href="./index.html">키 관리</a>
+        </div>
+        <div class="api-status" id="apiStatus">API 조회 전입니다. 후보 데이터는 조회 후 표시됩니다.</div>
+      </section>
+
+      <section class="control-panel" aria-labelledby="criteria-title">
+        <div class="section-heading">
+          <p class="eyebrow">Step 1</p>
+          <h2 id="criteria-title">&#54217;&#44032; &#44592;&#51456;(&#44277;&#50557;/&#44592;&#47197; &#45936;&#51060;&#53552; &#50672;&#44208; &#54980; &#49324;&#50857;)</h2>
+        </div>
+        <div class="weights" id="weights"></div>
+      </section>
+
+      <section class="summary-band" aria-label="Score explanation">
+        <div>
+          <strong>&#45208;&#50752;&#51032; &#51201;&#54633;&#46020;</strong>
+          <span>&#49324;&#50857;&#51088;&#44032; &#51473;&#50836;&#54616;&#44172; &#48372;&#45716; &#51648;&#50669; &#54788;&#50504;&#44284; &#54980;&#48372; &#44592;&#47197;&#51060; &#50620;&#47560;&#45208; &#47582;&#45716;&#51648; &#44228;&#49328;&#54633;&#45768;&#45796;.</span>
+        </div>
+        <div>
+          <strong>&#44277;&#44277;&#44592;&#47197; &#51216;&#49688;</strong>
+          <span>&#51116;&#49328;/&#48337;&#50669;/&#45225;&#49464;, &#50980;&#47532;, &#51068;&#44288;&#49457;, &#51648;&#48169;&#51032;&#54924; &#54876;&#46041;&#51012; &#46384;&#47196; &#48372;&#50668;&#51461;&#45768;&#45796;.</span>
+        </div>
+        <div>
+          <strong>&#51032;&#50504;/&#51312;&#47168; &#54876;&#46041;</strong>
+          <span>&#48156;&#51032; &#44148;&#49688;, &#44032;&#44208;/&#44277;&#54252; &#44148;&#49688;, &#49457;&#49324;&#50984;, &#50948;&#50896;&#54924; &#53685;&#44284;&#47484; &#48372;&#50668;&#51461;&#45768;&#45796;.</span>
+        </div>
+      </section>
+
+      <section class="office-panel" aria-labelledby="office-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Election offices</p>
+            <h2 id="office-title">&#51648;&#48169;&#49440;&#44144; &#49440;&#52636;&#51649; &#51204;&#52404; &#47532;&#49828;&#53944;</h2>
+          </div>
+          <div class="region-filter" aria-label="Region filter">
+            <label for="regionFilter">&#51648;&#50669;</label>
+            <select id="regionFilter">
+              <option value="all">&#51204;&#52404;</option>
+              <option value="general">&#51068;&#48152; &#51648;&#50669;</option>
+              <option value="sejong">&#49464;&#51333;</option>
+              <option value="jeju">&#51228;&#51452;</option>
+            </select>
+          </div>
+        </div>
+        <div class="office-grid" id="officeList"></div>
+        <div class="candidate-explorer" id="candidateExplorer" aria-live="polite"></div>
+        <p class="source-note">
+          &#51068;&#48152; &#51648;&#50669;&#51008; &#53685;&#49345; 1&#51064; 7&#54364;&#51060;&#47728;, &#49464;&#51333;&#51008; 4&#54364;, &#51228;&#51452;&#45716; 5&#54364;&#47196; &#50868;&#50689;&#46104;&#45716; &#44396;&#51312;&#51077;&#45768;&#45796;.
+        </p>
+      </section>
+
+      <section class="results-layout">
+        <div>
+          <div class="section-heading inline">
+            <div>
+              <p class="eyebrow">Step 2</p>
+              <h2>&#54980;&#48372; &#44592;&#48376;&#51221;&#48372;</h2>
+            </div>
+            <button class="ghost-button" id="resetWeights" type="button">&#52488;&#44592;&#54868;</button>
+          </div>
+          <div class="candidate-grid" id="candidateGrid"></div>
+        </div>
+
+        <aside class="detail-panel" id="detailPanel" aria-live="polite"></aside>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

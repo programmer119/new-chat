@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PublicFit | 한국정치인 모두보기</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">PublicFit</p>
+        <h1>한국정치인 모두보기</h1>
+      </div>
+      <div class="district-picker">
+        <span>데이터 출처</span>
+        <strong>중앙선관위 후보자 정보 API</strong>
+      </div>
+    </header>
+
+    <main>
+      <section class="api-panel">
+        <div>
+          <p class="eyebrow">Live data</p>
+          <h2>홈에 저장한 API 키로 조회합니다</h2>
+          <p class="api-copy">
+            현재 연결된 실제 공공데이터는 중앙선관위 후보자 정보 API입니다. 따라서 이 페이지는 선거 출마 후보자 목록을 실제 데이터로 보여줍니다.
+          </p>
+        </div>
+        <div class="api-controls">
+          <label for="sgIdInput">선거ID</label>
+          <input id="sgIdInput" type="text" value="20260603" aria-label="선거ID" />
+          <button class="ghost-button" id="loadAll" type="button">전체 조회</button>
+          <a class="ghost-link" href="./index.html">키 관리</a>
+        </div>
+        <div class="api-status" id="apiStatus">홈에서 ServiceKey를 저장하면 조회할 수 있습니다.</div>
+      </section>
+
+      <section class="control-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Sort</p>
+            <h2>정렬</h2>
+          </div>
+          <div class="sort-actions">
+            <button class="ghost-button active" data-sort="name" type="button">이름</button>
+            <button class="ghost-button" data-sort="office" type="button">선출직</button>
+            <button class="ghost-button" data-sort="record" type="button">공공기록 점수</button>
+            <button class="ghost-button" data-sort="bills" type="button">발의수</button>
+            <button class="ghost-button" data-sort="passed" type="button">발의성공수</button>
+          </div>
+        </div>
+        <p class="source-note">
+          발의수와 발의성공수는 조례/의안 또는 국회 의안 데이터 연결 후 정렬됩니다. 현재는 실제 후보자 정보 API에 없는 필드라 임의값을 넣지 않습니다.
+        </p>
+      </section>
+
+      <section class="politician-list" id="politicianList"></section>
+    </main>
+
+    <script src="./politicians.js"></script>
+  </body>
+</html>

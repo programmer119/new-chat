@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PublicFit | Home</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="home-hero">
+      <p class="eyebrow">PublicFit</p>
+      <h1>공공데이터로 한국 정치인을 확인합니다</h1>
+      <p>
+        공공데이터포털 ServiceKey를 한 번 저장하면 지방선거 후보자 조회와 정치인 전체 보기에서 같은 키를 사용합니다.
+      </p>
+    </header>
+
+    <main>
+      <section class="api-panel home-api" aria-labelledby="home-api-title">
+        <div>
+          <p class="eyebrow">API key</p>
+          <h2 id="home-api-title">공공데이터포털 인증키 저장</h2>
+          <p class="api-copy">중앙선거관리위원회 후보자 정보 API 활용승인 후 받은 일반 인증키를 입력하세요.</p>
+        </div>
+        <div class="api-controls">
+          <label for="apiKey">ServiceKey</label>
+          <input id="apiKey" type="password" placeholder="공공데이터포털 인증키" autocomplete="off" />
+          <input id="sgIdInput" type="text" value="20260603" aria-label="선거ID" />
+          <button class="ghost-button" id="saveKey" type="button">저장</button>
+          <button class="ghost-button" id="clearKey" type="button">삭제</button>
+        </div>
+        <div class="api-status" id="apiStatus">저장된 키가 있으면 자동으로 불러옵니다.</div>
+      </section>
+
+      <section class="home-actions" aria-label="Primary navigation">
+        <a class="home-button" href="./politicians.html">
+          <strong>한국정치인 모두보기</strong>
+          <span>연결된 공공데이터 기준으로 정치인/후보자 목록을 확인합니다.</span>
+        </a>
+        <a class="home-button" href="./local-election.html">
+          <strong>지방선거</strong>
+          <span>선출직과 지역을 고르고 실제 후보자 정보를 조회합니다.</span>
+        </a>
+      </section>
+    </main>
+
+    <script src="./home.js"></script>
+  </body>
+</html>
