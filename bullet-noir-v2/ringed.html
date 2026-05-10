@@ -117,6 +117,8 @@
       aimKnobY: 0,
       aimX: 0,
       aimY: 0,
+      aimScreenX: 0,
+      aimScreenY: 0,
       shoot: false,
       bomb: false,
       dodge: false
@@ -522,6 +524,8 @@
       mobileControls.moveY = 0;
       mobileControls.aimKnobX = 0;
       mobileControls.aimKnobY = 0;
+      mobileControls.aimScreenX = 0;
+      mobileControls.aimScreenY = 0;
       raidWarningActive = false;
       raidAlarmTimer = 0;
     }
@@ -1302,9 +1306,7 @@
       updateIdleRaid(dt, Math.hypot(player.x - beforePlayerX, player.y - beforePlayerY), mouse.down || mouse.right || keys.has("KeyQ"));
 
       const worldMouse = screenToWorld(mouse.x, mouse.y);
-      const aimTarget = isMobile && mobileControls.shoot
-        ? { x: mobileControls.aimX, y: mobileControls.aimY }
-        : (isMobile ? { x: player.x + Math.cos(player.angle) * 260, y: player.y + Math.sin(player.angle) * 260 } : worldMouse);
+      const aimTarget = currentAimTarget(worldMouse);
       player.angle = Math.atan2(aimTarget.y - player.y, aimTarget.x - player.x);
       updateCamera(dt, worldMouse);
       updateAimRay(aimTarget);
@@ -1729,6 +1731,30 @@
         blocked: !!hit.solid,
         enemy: !!hit.enemy
       };
+    }
+
+    function currentAimTarget(worldMouse) {
+      if (!isMobile) return worldMouse;
+      if (mobileControls.shoot) return mobileAimWorldTarget();
+      return { x: player.x + Math.cos(player.angle) * 260, y: player.y + Math.sin(player.angle) * 260 };
+    }
+
+    function mobileAimWorldTarget() {
+      if (!mobileControls.aimScreenX && !mobileControls.aimScreenY) {
+        setMobileAimCursorFromDirection(Math.cos(player.angle || 0), Math.sin(player.angle || 0));
+      }
+      return screenToWorld(mobileControls.aimScreenX, mobileControls.aimScreenY);
+    }
+
+    function setMobileAimCursorFromDirection(dirX, dirY) {
+      const distance = Math.min(width, height) * 0.32;
+      const px = screenX(player.x);
+      const py = screenY(player.y);
+      mobileControls.aimScreenX = clamp(px + dirX * distance, 18, width - 18);
+      mobileControls.aimScreenY = clamp(py + dirY * distance, 18, height - 18);
+      const target = screenToWorld(mobileControls.aimScreenX, mobileControls.aimScreenY);
+      mobileControls.aimX = target.x;
+      mobileControls.aimY = target.y;
     }
 
     function rayRect(x, y, dx, dy, rect) {
@@ -2162,11 +2188,17 @@
       ctx.fillRect(0, 0, width, height);
       drawIntroFloor();
       if (!introStarted) {
-        ctx.fillStyle = "rgba(225, 224, 215, 0.9)";
+        const pulse = 0.52 + Math.sin(performance.now() * 0.006) * 0.36;
+        ctx.save();
+        ctx.globalAlpha = 0.72 + pulse * 0.28;
+        ctx.shadowColor = "rgba(235, 226, 190, " + (0.25 + pulse * 0.35) + ")";
+        ctx.shadowBlur = 10 + pulse * 18;
+        ctx.fillStyle = "rgba(225, 224, 215, 0.94)";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.font = "800 " + Math.round(Math.min(28, Math.max(18, width * 0.035))) + "px Arial";
-        ctx.fillText("CLICK / TAP TO START", width / 2, height * 0.7);
+        ctx.font = "900 " + Math.round(Math.min(30, Math.max(19, width * 0.036))) + "px Arial";
+        ctx.fillText("CLICK / TAP TO START", width / 2, height * 0.7 + Math.sin(performance.now() * 0.004) * 2);
+        ctx.restore();
         ctx.font = "600 " + Math.round(Math.min(15, Math.max(12, width * 0.022))) + "px Arial";
         ctx.fillStyle = "rgba(170, 174, 172, 0.78)";
         ctx.fillText("sound enabled intro", width / 2, height * 0.7 + 30);
@@ -2336,11 +2368,82 @@
       ctx.fillStyle = "#f1d477";
       ctx.font = "700 24px Arial";
       ctx.fillText("Click or press Enter to play", width / 2, height * 0.58);
+      drawMenuCastShowcase();
       drawMenuButton(menuMapToolButton(), "MAP TOOL", false);
     }
 
     function menuMapToolButton() {
-      return { x: width / 2 - 86, y: height * 0.64, w: 172, h: 42 };
+      return { x: width / 2 - 86, y: Math.min(height - 74, height * 0.76), w: 172, h: 42 };
+    }
+
+    function drawMenuCastShowcase() {
+      const now = performance.now() * 0.001;
+      const stageY = height * 0.43;
+      const centerX = width / 2;
+      const gap = Math.min(86, Math.max(58, width * 0.095));
+      const cast = [
+        { kind: "shooter", player: true, delay: 0 },
+        { kind: "melee", delay: 0.28 },
+        { kind: "shooter", delay: 0.56 },
+        { kind: "flamer", delay: 0.84 }
+      ];
+      ctx.save();
+      ctx.globalAlpha = 0.88;
+      ctx.fillStyle = "rgba(0,0,0,0.26)";
+      ctx.beginPath();
+      ctx.ellipse(centerX, stageY + 36, gap * 2.65, 22, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      for (let i = 0; i < cast.length; i++) {
+        const item = cast[i];
+        const appear = clamp((gameOverTimer - item.delay) / 0.42, 0, 1);
+        const x = centerX + (i - 1.5) * gap;
+        const y = stageY + Math.sin(now * 1.6 + i) * 2 - (1 - appear) * 28;
+        ctx.save();
+        ctx.globalAlpha = appear;
+        ctx.translate(x, y);
+        ctx.rotate((i - 1.5) * 0.08);
+        const s = item.player ? 1.08 : 0.95;
+        ctx.scale(s, s);
+        drawTacticalHuman(24, !!item.player, item.kind !== "melee", item.kind);
+        ctx.restore();
+      }
+      const squadStart = 1.55;
+      const raidT = Math.max(0, gameOverTimer - squadStart);
+      if (raidT > 0) drawMenuSpecialForces(raidT, centerX, stageY, gap);
+    }
+
+    function drawMenuSpecialForces(t, centerX, stageY, gap) {
+      const entries = [
+        { x: centerX - gap * 2.6, y: stageY - 94, fromX: -120, fromY: -90, leader: false, angle: 0.42 },
+        { x: centerX + gap * 2.6, y: stageY - 92, fromX: width + 120, fromY: -90, leader: false, angle: 2.7 },
+        { x: centerX - gap * 2.35, y: stageY + 84, fromX: -120, fromY: height + 80, leader: false, angle: -0.34 },
+        { x: centerX + gap * 2.35, y: stageY + 82, fromX: width + 120, fromY: height + 80, leader: true, angle: -2.82 }
+      ];
+      for (let i = 0; i < entries.length; i++) {
+        const unit = entries[i];
+        const p = clamp((t - i * 0.18) / 0.62, 0, 1);
+        const ease = 1 - Math.pow(1 - p, 3);
+        const x = unit.fromX + (unit.x - unit.fromX) * ease;
+        const y = unit.fromY + (unit.y - unit.fromY) * ease + Math.sin(p * Math.PI) * -16;
+        ctx.save();
+        ctx.globalAlpha = p;
+        ctx.translate(x, y);
+        ctx.rotate(unit.angle);
+        drawTacticalHuman(unit.leader ? 27 : 24, false, true, unit.leader ? "shooter" : (i === 2 ? "flamer" : "shooter"));
+        drawRaidUnitOverlay({ r: unit.leader ? 27 : 24, raidAggressive: true, raidLeader: unit.leader });
+        ctx.restore();
+        if (p > 0.15 && p < 0.95) {
+          ctx.save();
+          ctx.strokeStyle = unit.leader ? "rgba(255,92,62,0.42)" : "rgba(90,190,255,0.32)";
+          ctx.lineWidth = unit.leader ? 2.4 : 1.8;
+          ctx.beginPath();
+          ctx.moveTo(unit.fromX + (unit.x - unit.fromX) * Math.max(0, ease - 0.18), unit.fromY + (unit.y - unit.fromY) * Math.max(0, ease - 0.18));
+          ctx.lineTo(x, y);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
     }
 
     function drawMenuButton(rect, label, active) {
@@ -3651,6 +3754,10 @@
           startGame();
           return;
         }
+        if (state === "dead") {
+          startGame();
+          return;
+        }
       if (state !== "play") continue;
       if (handleGameMenuButtonClick(p.x, p.y)) return;
       if (handleSpecialForcesToggleClick(p.x, p.y)) return;
@@ -3693,6 +3800,8 @@
         mobileControls.shoot = false;
         mobileControls.aimKnobX = 0;
         mobileControls.aimKnobY = 0;
+        mobileControls.aimScreenX = 0;
+        mobileControls.aimScreenY = 0;
       }
     }
 
@@ -3738,8 +3847,7 @@
       mobileControls.aimKnobY = ay;
       const dirX = Math.abs(dx) + Math.abs(dy) < 8 ? Math.cos(player.angle || 0) : dx / d;
       const dirY = Math.abs(dx) + Math.abs(dy) < 8 ? Math.sin(player.angle || 0) : dy / d;
-      mobileControls.aimX = player.x + dirX * 360;
-      mobileControls.aimY = player.y + dirY * 360;
+      setMobileAimCursorFromDirection(dirX, dirY);
     }
 
     function mobileActionAt(x, y) {
@@ -4217,6 +4325,7 @@
       const savedIntroTimer = introTimer;
       const savedIntroStarted = introStarted;
       const savedIntroSoundStarted = introSoundStarted;
+      const savedCamera = { x: camera.x, y: camera.y, zoom: camera.zoom };
       try {
         walls.length = 0;
         doors.length = 0;
@@ -4422,6 +4531,17 @@
           specialForcesToggleRect().y + 16
         ) && specialForcesEnabled === true;
         specialForcesEnabled = false;
+        camera.zoom = 1;
+        camera.x = 100;
+        camera.y = 200;
+        mobileControls.aimScreenX = 320;
+        mobileControls.aimScreenY = 240;
+        const mobileAimBeforeCameraMove = mobileAimWorldTarget();
+        camera.x += 55;
+        const mobileAimAfterCameraMove = mobileAimWorldTarget();
+        const mobileAimCursorActsLikeMouse =
+          Math.abs((mobileAimAfterCameraMove.x - mobileAimBeforeCameraMove.x) - 55) < 0.01 &&
+          Math.abs(mobileAimAfterCameraMove.y - mobileAimBeforeCameraMove.y) < 0.01;
         state = "intro";
         introTimer = 4.99;
         introStarted = true;
@@ -4484,6 +4604,7 @@
           narrowCornerFloorPasses,
           mobileActionsClearAttackStick,
           mobileSpecialToggleWorks,
+          mobileAimCursorActsLikeMouse,
           introCompletesToMenu
         };
       } finally {
@@ -4515,6 +4636,9 @@
         introTimer = savedIntroTimer;
         introStarted = savedIntroStarted;
         introSoundStarted = savedIntroSoundStarted;
+        camera.x = savedCamera.x;
+        camera.y = savedCamera.y;
+        camera.zoom = savedCamera.zoom;
       }
     }
 
