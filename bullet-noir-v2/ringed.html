@@ -119,6 +119,8 @@
       aimY: 0,
       aimScreenX: 0,
       aimScreenY: 0,
+      aimTouchX: 0,
+      aimTouchY: 0,
       shoot: false,
       bomb: false,
       dodge: false
@@ -279,17 +281,21 @@
     }
 
     function ensureAudio() {
-      if (audioReady) return;
+      if (audioReady) {
+        unlockAudio();
+        return;
+      }
       audioReady = true;
       try {
         sfx.playerGun = makeAudio("audio/samples/gun1.wav", 0.28);
         sfx.enemyGun = makeAudio("audio/samples/gun2.wav", 0.2);
         sfx.flamer = makeAudio("audio/samples/bomb.wav", 0.08);
-        sfx.death = makeAudio("audio/samples/enemy_die.wav", 0.18);
+        sfx.death = makeAudio("audio/samples/enemy_die_1.wav", 0.18);
       } catch (error) {
         console.warn("Audio init failed", error);
       }
       startNoirBgm();
+      unlockAudio();
     }
 
     function detectMobileDevice() {
@@ -310,6 +316,7 @@
     }
 
     function playSfx(name, rate = 1) {
+      unlockAudio();
       const sound = sfx[name];
       if (!sound) return;
       try {
@@ -320,6 +327,43 @@
       } catch (error) {
         // Sound is optional; gameplay should never fail because of audio.
       }
+    }
+
+    function unlockAudio() {
+      try {
+        if (audioCtx && audioCtx.state === "suspended" && audioCtx.resume) audioCtx.resume();
+        if (audioCtx) {
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          gain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(audioCtx.currentTime);
+          osc.stop(audioCtx.currentTime + 0.03);
+        }
+        for (const sound of Object.values(sfx)) {
+          if (!sound || sound.__unlocked) continue;
+          sound.__unlocked = true;
+          const oldMuted = sound.muted;
+          sound.muted = true;
+          sound.currentTime = 0;
+          const played = sound.play();
+          if (played && played.then) {
+            played.then(() => {
+              sound.pause();
+              sound.currentTime = 0;
+              sound.muted = oldMuted;
+            }).catch(() => {
+              sound.muted = oldMuted;
+              sound.__unlocked = false;
+            });
+          } else {
+            sound.pause();
+            sound.currentTime = 0;
+            sound.muted = oldMuted;
+          }
+        }
+      } catch (error) {}
     }
 
     function playRaidAlarm() {
@@ -3772,7 +3816,7 @@
         } else if (p.x > width * 0.54 && mobileControls.aimId === null) {
           mobileControls.aimId = touch.identifier;
           mobileControls.shoot = true;
-          updateMobileAttackStick(p.x, p.y);
+          updateMobileAttackStick(p.x, p.y, true);
         }
       }
     }
@@ -3802,6 +3846,8 @@
         mobileControls.aimKnobY = 0;
         mobileControls.aimScreenX = 0;
         mobileControls.aimScreenY = 0;
+        mobileControls.aimTouchX = 0;
+        mobileControls.aimTouchY = 0;
       }
     }
 
@@ -3811,7 +3857,7 @@
         if (touch.identifier === mobileControls.moveId) {
           updateMobileStick(p.x, p.y);
         } else if (touch.identifier === mobileControls.aimId) {
-          updateMobileAttackStick(p.x, p.y);
+          updateMobileAttackStick(p.x, p.y, false);
         }
       }
     }
@@ -3834,7 +3880,10 @@
       mobileControls.knobY = (dy / d) * Math.min(limit, d);
     }
 
-    function updateMobileAttackStick(x, y) {
+    function updateMobileAttackStick(x, y, force) {
+      if (!force && Math.hypot(x - mobileControls.aimTouchX, y - mobileControls.aimTouchY) < 2.5) return;
+      mobileControls.aimTouchX = x;
+      mobileControls.aimTouchY = y;
       const stick = mobileButtonRects().attack;
       const dx = x - stick.x;
       const dy = y - stick.y;
@@ -4542,6 +4591,21 @@
         const mobileAimCursorActsLikeMouse =
           Math.abs((mobileAimAfterCameraMove.x - mobileAimBeforeCameraMove.x) - 55) < 0.01 &&
           Math.abs(mobileAimAfterCameraMove.y - mobileAimBeforeCameraMove.y) < 0.01;
+        mobileControls.aimTouchX = 0;
+        mobileControls.aimTouchY = 0;
+        player.x = 500;
+        player.y = 500;
+        camera.x = 100;
+        camera.y = 100;
+        updateMobileAttackStick(1040, 570, true);
+        const lockedAimX = mobileControls.aimScreenX;
+        const lockedAimY = mobileControls.aimScreenY;
+        player.x += 90;
+        camera.x += 90;
+        updateMobileAttackStick(1040, 570, false);
+        const mobileAimUnaffectedByMoveStick =
+          Math.abs(mobileControls.aimScreenX - lockedAimX) < 0.01 &&
+          Math.abs(mobileControls.aimScreenY - lockedAimY) < 0.01;
         state = "intro";
         introTimer = 4.99;
         introStarted = true;
@@ -4605,6 +4669,7 @@
           mobileActionsClearAttackStick,
           mobileSpecialToggleWorks,
           mobileAimCursorActsLikeMouse,
+          mobileAimUnaffectedByMoveStick,
           introCompletesToMenu
         };
       } finally {
