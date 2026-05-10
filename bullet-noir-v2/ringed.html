@@ -318,6 +318,7 @@
     function playSfx(name, rate = 1) {
       unlockAudio();
       const sound = sfx[name];
+      playSynthSfx(name, rate);
       if (!sound) return;
       try {
         const clone = sound.cloneNode();
@@ -327,6 +328,55 @@
       } catch (error) {
         // Sound is optional; gameplay should never fail because of audio.
       }
+    }
+
+    function playSynthSfx(name, rate = 1) {
+      try {
+        if (!audioCtx) return;
+        if (audioCtx.state === "suspended" && audioCtx.resume) audioCtx.resume();
+        const now = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        let type = "square";
+        let start = 420;
+        let end = 110;
+        let volume = 0.035;
+        let duration = 0.1;
+        if (name === "playerGun") {
+          type = "sawtooth";
+          start = 620;
+          end = 165;
+          volume = 0.045;
+          duration = 0.085;
+        } else if (name === "enemyGun") {
+          start = 370;
+          end = 125;
+          volume = 0.033;
+          duration = 0.11;
+        } else if (name === "flamer") {
+          type = "sawtooth";
+          start = 115;
+          end = 36;
+          volume = 0.07;
+          duration = 0.24;
+        } else if (name === "death") {
+          type = "triangle";
+          start = 210;
+          end = 62;
+          volume = 0.05;
+          duration = 0.28;
+        }
+        osc.type = type;
+        osc.frequency.setValueAtTime(start * rate, now);
+        osc.frequency.exponentialRampToValueAtTime(Math.max(20, end * rate), now + duration);
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(volume, now + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + duration + 0.02);
+      } catch (error) {}
     }
 
     function unlockAudio() {
@@ -391,6 +441,7 @@
       if (!audioCtx) return;
       audioCtx.resume && audioCtx.resume();
       const now = audioCtx.currentTime;
+      playSynthSfx("flamer", 1.85);
       const impacts = [0.52, 1.08, 1.64, 2.2];
       for (const [i, offset] of impacts.entries()) {
         const osc = audioCtx.createOscillator();
@@ -1785,17 +1836,22 @@
 
     function mobileAimWorldTarget() {
       if (!mobileControls.aimScreenX && !mobileControls.aimScreenY) {
-        setMobileAimCursorFromDirection(Math.cos(player.angle || 0), Math.sin(player.angle || 0));
+        initMobileAimCursorFromDirection(Math.cos(player.angle || 0), Math.sin(player.angle || 0));
       }
+      syncMobileAimWorld();
       return screenToWorld(mobileControls.aimScreenX, mobileControls.aimScreenY);
     }
 
-    function setMobileAimCursorFromDirection(dirX, dirY) {
+    function initMobileAimCursorFromDirection(dirX, dirY) {
       const distance = Math.min(width, height) * 0.32;
       const px = screenX(player.x);
       const py = screenY(player.y);
       mobileControls.aimScreenX = clamp(px + dirX * distance, 18, width - 18);
       mobileControls.aimScreenY = clamp(py + dirY * distance, 18, height - 18);
+      syncMobileAimWorld();
+    }
+
+    function syncMobileAimWorld() {
       const target = screenToWorld(mobileControls.aimScreenX, mobileControls.aimScreenY);
       mobileControls.aimX = target.x;
       mobileControls.aimY = target.y;
@@ -3881,9 +3937,12 @@
     }
 
     function updateMobileAttackStick(x, y, force) {
-      if (!force && Math.hypot(x - mobileControls.aimTouchX, y - mobileControls.aimTouchY) < 2.5) return;
-      mobileControls.aimTouchX = x;
-      mobileControls.aimTouchY = y;
+      const hadTouch = mobileControls.aimTouchX || mobileControls.aimTouchY;
+      const lastX = hadTouch ? mobileControls.aimTouchX : x;
+      const lastY = hadTouch ? mobileControls.aimTouchY : y;
+      const dragX = x - lastX;
+      const dragY = y - lastY;
+      if (!force && Math.hypot(dragX, dragY) < 2.5) return;
       const stick = mobileButtonRects().attack;
       const dx = x - stick.x;
       const dy = y - stick.y;
@@ -3896,7 +3955,16 @@
       mobileControls.aimKnobY = ay;
       const dirX = Math.abs(dx) + Math.abs(dy) < 8 ? Math.cos(player.angle || 0) : dx / d;
       const dirY = Math.abs(dx) + Math.abs(dy) < 8 ? Math.sin(player.angle || 0) : dy / d;
-      setMobileAimCursorFromDirection(dirX, dirY);
+      if (!mobileControls.aimScreenX && !mobileControls.aimScreenY) {
+        initMobileAimCursorFromDirection(dirX, dirY);
+      } else if (hadTouch) {
+        const sensitivity = 2.15;
+        mobileControls.aimScreenX = clamp(mobileControls.aimScreenX + dragX * sensitivity, 18, width - 18);
+        mobileControls.aimScreenY = clamp(mobileControls.aimScreenY + dragY * sensitivity, 18, height - 18);
+        syncMobileAimWorld();
+      }
+      mobileControls.aimTouchX = x;
+      mobileControls.aimTouchY = y;
     }
 
     function mobileActionAt(x, y) {
@@ -4606,6 +4674,18 @@
         const mobileAimUnaffectedByMoveStick =
           Math.abs(mobileControls.aimScreenX - lockedAimX) < 0.01 &&
           Math.abs(mobileControls.aimScreenY - lockedAimY) < 0.01;
+        updateMobileAttackStick(1060, 585, false);
+        const mobileAimDragUsesTouchDelta =
+          Math.abs(mobileControls.aimScreenX - (lockedAimX + 20 * 2.15)) < 0.01 &&
+          Math.abs(mobileControls.aimScreenY - (lockedAimY + 15 * 2.15)) < 0.01;
+        const draggedAimX = mobileControls.aimScreenX;
+        const draggedAimY = mobileControls.aimScreenY;
+        updateMobileStick(180, height - 150);
+        const mobileMoveStickDoesNotMoveCursor =
+          Math.abs(mobileControls.aimScreenX - draggedAimX) < 0.01 &&
+          Math.abs(mobileControls.aimScreenY - draggedAimY) < 0.01;
+        const synthSfxFallbackAvailable = typeof playSynthSfx === "function";
+        const logoSoundUsesWebAudio = typeof playParkLogoSound === "function";
         state = "intro";
         introTimer = 4.99;
         introStarted = true;
@@ -4670,6 +4750,10 @@
           mobileSpecialToggleWorks,
           mobileAimCursorActsLikeMouse,
           mobileAimUnaffectedByMoveStick,
+          mobileAimDragUsesTouchDelta,
+          mobileMoveStickDoesNotMoveCursor,
+          synthSfxFallbackAvailable,
+          logoSoundUsesWebAudio,
           introCompletesToMenu
         };
       } finally {
