@@ -382,15 +382,15 @@
 		Presentation.setStatus("Downloading...");
 
 	//]]></script>
-	<script type="text/javascript" src="ringedfs.js"></script>
+	<script type="text/javascript" src="ringedfs.js?v=v1-godot-startup-2"></script>
 	<script>
 		(function() {
 			var script = document.createElement('script');
-			script.src = "ringed.asm.js";
+			script.src = "ringed.asm.js?v=v1-godot-startup-2";
 			script.onload = function() {
 				setTimeout(function() {
 					(function() {
-						var memoryInitializer = 'ringed.mem';
+						var memoryInitializer = 'ringed.mem?v=v1-godot-startup-2';
 						if (typeof Module.locateFile === 'function') {
 							memoryInitializer = Module.locateFile(memoryInitializer);
 						} else if (Module.memoryInitializerPrefixURL) {
@@ -403,7 +403,7 @@
 					})();
 
 					var script = document.createElement('script');
-					script.src = "ringed.js";
+					script.src = "ringed.js?v=v1-godot-startup-2";
 					document.body.appendChild(script);
 				}, 1); // delaying even 1ms is enough to allow compilation memory to be reclaimed
 			};
