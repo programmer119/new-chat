@@ -6,9 +6,83 @@ const ui = {
   wave: document.querySelector("#wave"),
   time: document.querySelector("#time"),
   focus: document.querySelector("#focus"),
+  health: document.querySelector("#health"),
+  operative: document.querySelector("#operative"),
+  ammo: document.querySelector("#ammo"),
   overlay: document.querySelector("#overlay"),
   status: document.querySelector("#status"),
   restart: document.querySelector("#restart"),
+  loadout: [...document.querySelectorAll(".loadout-button")],
+};
+
+const WEAPONS = {
+  rifle: {
+    name: "Rifle",
+    damage: 26,
+    fireDelay: 0.105,
+    magazine: 30,
+    reload: 1.25,
+    speed: 840,
+    spread: 0.035,
+    pellets: 1,
+    soundRadius: 220,
+  },
+  autogun: {
+    name: "Autogun",
+    damage: 17,
+    fireDelay: 0.07,
+    magazine: 70,
+    reload: 2.1,
+    speed: 820,
+    spread: 0.07,
+    pellets: 1,
+    soundRadius: 290,
+    moveScale: 0.78,
+  },
+  vindicator: {
+    name: "Vindicator",
+    damage: 12,
+    fireDelay: 0.52,
+    magazine: 8,
+    reload: 1.55,
+    speed: 760,
+    spread: 0.19,
+    pellets: 6,
+    soundRadius: 260,
+  },
+};
+
+const OPERATIVES = {
+  nco: {
+    label: "NCO",
+    weapon: "rifle",
+    maxHealth: 120,
+    speed: 280,
+    focusRegen: 0.24,
+    color: "#f4f0de",
+  },
+  specialist: {
+    label: "Heavy",
+    weapon: "autogun",
+    maxHealth: 150,
+    speed: 252,
+    focusRegen: 0.18,
+    color: "#d7dee0",
+  },
+  medic: {
+    label: "Medic",
+    weapon: "vindicator",
+    maxHealth: 105,
+    speed: 292,
+    focusRegen: 0.3,
+    color: "#f4f0de",
+  },
+};
+
+const ALIENS = {
+  drone: { hp: 42, speed: 112, r: 13, damage: 22, score: 100, color: "#141719" },
+  ranger: { hp: 58, speed: 82, r: 15, damage: 18, score: 160, color: "#8f1f1f", shoot: true },
+  brute: { hp: 140, speed: 66, r: 20, damage: 38, score: 320, color: "#d52828" },
 };
 
 const keys = new Set();
@@ -27,6 +101,11 @@ const state = {
   enemies: [],
   particles: [],
   rain: [],
+  director: {
+    intensity: 0,
+    hordeTimer: 18,
+    horde: 0,
+  },
 };
 
 const player = {
@@ -35,6 +114,12 @@ const player = {
   r: 12,
   speed: 275,
   fireCooldown: 0,
+  reloadTimer: 0,
+  ammo: 30,
+  classId: "nco",
+  weaponId: "rifle",
+  health: 120,
+  maxHealth: 120,
   focus: 1,
   invuln: 0,
 };
@@ -81,13 +166,18 @@ function startGame() {
   state.playerBullets.length = 0;
   state.enemies.length = 0;
   state.particles.length = 0;
+  state.director.intensity = 0;
+  state.director.hordeTimer = 16;
+  state.director.horde = 0;
   state.shake = 0;
   state.flash = 0;
+  applyOperative(player.classId);
   player.x = width * 0.5;
   player.y = height * 0.62;
   player.focus = 1;
   player.invuln = 1.2;
   player.fireCooldown = 0;
+  player.reloadTimer = 0;
   ui.overlay.hidden = true;
   ui.restart.hidden = true;
 }
@@ -110,6 +200,7 @@ function worldPointer(event) {
 }
 
 function spawnEnemy() {
+  const type = pickAlienType();
   const edge = Math.floor(Math.random() * 4);
   const margin = 42;
   let x = 0;
@@ -128,30 +219,45 @@ function spawnEnemy() {
     y = Math.random() * height;
   }
 
-  const type = Math.random() < Math.min(0.18 + state.wave * 0.02, 0.38) ? "gunner" : "knife";
+  const alien = ALIENS[type];
   state.enemies.push({
     x,
     y,
-    r: type === "gunner" ? 15 : 13,
-    hp: type === "gunner" ? 2 : 1,
+    r: alien.r,
+    hp: alien.hp + state.wave * (type === "brute" ? 12 : 4),
+    maxHp: alien.hp + state.wave * (type === "brute" ? 12 : 4),
     type,
-    speed: type === "gunner" ? 74 + state.wave * 5 : 106 + state.wave * 7,
+    speed: alien.speed + state.wave * 4,
+    damage: alien.damage,
     shoot: 0.5 + Math.random() * 1.2,
     angle: 0,
   });
 }
 
 function shoot() {
+  const weapon = WEAPONS[player.weaponId];
+  if (player.reloadTimer > 0) return;
+  if (player.ammo <= 0) {
+    startReload();
+    return;
+  }
+
   const aim = pointer.active ? angleTo(player, pointer) : -Math.PI / 2;
-  state.playerBullets.push({
-    x: player.x + Math.cos(aim) * 18,
-    y: player.y + Math.sin(aim) * 18,
-    vx: Math.cos(aim) * 820,
-    vy: Math.sin(aim) * 820,
-    life: 0.85,
-    r: 4,
-  });
-  player.fireCooldown = 0.105;
+  for (let i = 0; i < weapon.pellets; i++) {
+    const pelletAim = aim + (Math.random() - 0.5) * weapon.spread * 2;
+    state.playerBullets.push({
+      x: player.x + Math.cos(pelletAim) * 18,
+      y: player.y + Math.sin(pelletAim) * 18,
+      vx: Math.cos(pelletAim) * weapon.speed,
+      vy: Math.sin(pelletAim) * weapon.speed,
+      life: 0.85,
+      r: weapon.pellets > 1 ? 3 : 4,
+      damage: weapon.damage,
+    });
+  }
+  player.ammo -= 1;
+  player.fireCooldown = weapon.fireDelay;
+  state.director.intensity = clamp(state.director.intensity + weapon.soundRadius / 2600, 0, 1);
   state.shake = Math.max(state.shake, 2.2);
   spark(player.x + Math.cos(aim) * 19, player.y + Math.sin(aim) * 19, aim);
 }
@@ -165,6 +271,7 @@ function enemyShoot(enemy) {
     vy: Math.sin(aim) * (245 + state.wave * 8),
     life: 4,
     r: 4.5,
+    damage: enemy.damage,
   });
   spark(enemy.x, enemy.y, aim);
 }
@@ -186,12 +293,15 @@ function update(dt) {
   state.flash = Math.max(0, state.flash - dt * 1.8);
   player.invuln = Math.max(0, player.invuln - dt);
   player.fireCooldown -= step;
-  player.focus = Math.max(0, Math.min(1, player.focus + (focusMode ? -dt * 0.28 : dt * 0.2)));
+  player.reloadTimer = Math.max(0, player.reloadTimer - dt);
+  player.focus = Math.max(0, Math.min(1, player.focus + (focusMode ? -dt * 0.28 : dt * OPERATIVES[player.classId].focusRegen)));
+  updateDirector(dt);
 
   movePlayer(dt, focusMode);
   if ((pointer.down || keys.has(" ")) && player.fireCooldown <= 0) shoot();
+  if (keys.has("r")) startReload();
 
-  const spawnRate = Math.max(0.22, 1.05 - state.wave * 0.08);
+  const spawnRate = Math.max(0.2, 1.12 - state.wave * 0.08 - state.director.intensity * 0.35);
   if (state.spawnTimer <= 0) {
     spawnEnemy();
     state.spawnTimer = spawnRate * (0.72 + Math.random() * 0.5);
@@ -214,7 +324,9 @@ function movePlayer(dt, focusMode) {
   if (keys.has("a") || keys.has("arrowleft")) mx -= 1;
   if (keys.has("d") || keys.has("arrowright")) mx += 1;
   const len = Math.hypot(mx, my) || 1;
-  const speed = player.speed * (focusMode ? 0.74 : 1);
+  const weapon = WEAPONS[player.weaponId];
+  const firingScale = pointer.down && weapon.moveScale ? weapon.moveScale : 1;
+  const speed = player.speed * firingScale * (focusMode ? 0.74 : 1);
   player.x = clamp(player.x + (mx / len) * speed * dt, 24, width - 24);
   player.y = clamp(player.y + (my / len) * speed * dt, 24, height - 24);
 }
@@ -235,12 +347,12 @@ function updateEnemies(dt) {
   for (const enemy of state.enemies) {
     const aim = angleTo(enemy, player);
     enemy.angle = aim;
-    const keepDistance = enemy.type === "gunner" && dist(enemy, player) < 250;
+    const keepDistance = ALIENS[enemy.type].shoot && dist(enemy, player) < 250;
     const dir = keepDistance ? -1 : 1;
     enemy.x += Math.cos(aim) * enemy.speed * dir * dt;
     enemy.y += Math.sin(aim) * enemy.speed * dir * dt;
     enemy.shoot -= dt;
-    if (enemy.type === "gunner" && enemy.shoot <= 0) {
+    if (ALIENS[enemy.type].shoot && enemy.shoot <= 0) {
       enemyShoot(enemy);
       enemy.shoot = Math.max(0.8, 1.8 - state.wave * 0.07) + Math.random() * 0.8;
     }
@@ -254,12 +366,13 @@ function resolveHits() {
       const enemy = state.enemies[j];
       if (dist(bullet, enemy) < bullet.r + enemy.r) {
         state.playerBullets.splice(i, 1);
-        enemy.hp -= 1;
-        burst(bullet.x, bullet.y, enemy.type === "gunner" ? "#d52828" : "#f4f0de", 10, 220);
+        enemy.hp -= bullet.damage;
+        burst(bullet.x, bullet.y, enemy.type === "ranger" ? "#d52828" : "#f4f0de", 10, 220);
         state.shake = Math.max(state.shake, 4);
         if (enemy.hp <= 0) {
           state.enemies.splice(j, 1);
-          state.score += enemy.type === "gunner" ? 180 : 100;
+          state.score += ALIENS[enemy.type].score;
+          state.director.intensity = clamp(state.director.intensity + (enemy.type === "brute" ? 0.16 : 0.06), 0, 1);
           burst(enemy.x, enemy.y, "#d52828", 22, 300);
         }
         break;
@@ -269,10 +382,18 @@ function resolveHits() {
 
   if (player.invuln > 0) return;
   for (const enemy of state.enemies) {
-    if (dist(enemy, player) < enemy.r + player.r) return endGame();
+    if (dist(enemy, player) < enemy.r + player.r) {
+      damagePlayer(enemy.damage);
+      enemy.x -= Math.cos(enemy.angle) * 28;
+      enemy.y -= Math.sin(enemy.angle) * 28;
+    }
   }
-  for (const bullet of state.enemyBullets) {
-    if (dist(bullet, player) < bullet.r + player.r) return endGame();
+  for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
+    const bullet = state.enemyBullets[i];
+    if (dist(bullet, player) < bullet.r + player.r) {
+      state.enemyBullets.splice(i, 1);
+      damagePlayer(bullet.damage);
+    }
   }
 }
 
@@ -365,8 +486,8 @@ function drawEnemies() {
     ctx.save();
     ctx.translate(enemy.x, enemy.y);
     ctx.rotate(enemy.angle);
-    ctx.fillStyle = enemy.type === "gunner" ? "#d52828" : "#141719";
-    ctx.strokeStyle = enemy.type === "gunner" ? "#f4f0de" : "#d52828";
+    ctx.fillStyle = ALIENS[enemy.type].color;
+    ctx.strokeStyle = enemy.type === "drone" ? "#d52828" : "#f4f0de";
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(enemy.r + 4, 0);
@@ -459,6 +580,64 @@ function updateUi() {
   const seconds = Math.floor(state.elapsed % 60).toString().padStart(2, "0");
   ui.time.textContent = `${minutes}:${seconds}`;
   ui.focus.style.transform = `scaleX(${player.focus})`;
+  ui.health.style.transform = `scaleX(${Math.max(0, player.health / player.maxHealth)})`;
+  ui.operative.textContent = OPERATIVES[player.classId].label;
+  ui.ammo.textContent = player.reloadTimer > 0 ? "..." : `${player.ammo}/${WEAPONS[player.weaponId].magazine}`;
+}
+
+function applyOperative(classId) {
+  const operative = OPERATIVES[classId];
+  player.classId = classId;
+  player.weaponId = operative.weapon;
+  player.maxHealth = operative.maxHealth;
+  player.health = operative.maxHealth;
+  player.speed = operative.speed;
+  player.ammo = WEAPONS[player.weaponId].magazine;
+}
+
+function startReload() {
+  const weapon = WEAPONS[player.weaponId];
+  if (player.reloadTimer > 0 || player.ammo === weapon.magazine) return;
+  player.reloadTimer = weapon.reload;
+  player.fireCooldown = Math.max(player.fireCooldown, weapon.reload);
+  window.setTimeout(() => {
+    if (player.reloadTimer <= 0 && state.running) {
+      player.ammo = weapon.magazine;
+      updateUi();
+    }
+  }, weapon.reload * 1000);
+}
+
+function damagePlayer(amount) {
+  if (player.invuln > 0) return;
+  player.health -= amount;
+  player.invuln = 0.35;
+  state.flash = 0.35;
+  state.shake = Math.max(state.shake, 8);
+  state.director.intensity = clamp(state.director.intensity + amount / player.maxHealth, 0, 1);
+  burst(player.x, player.y, "#f4f0de", 14, 250);
+  if (player.health <= 0) endGame();
+}
+
+function updateDirector(dt) {
+  state.director.intensity = clamp(state.director.intensity - dt * 0.025, 0, 1);
+  state.director.hordeTimer -= dt;
+  if (state.director.hordeTimer <= 0) {
+    state.director.horde += 5 + Math.floor(state.wave * 1.5);
+    state.director.hordeTimer = Math.max(7, 18 - state.wave * 1.2);
+  }
+  if (state.director.horde > 0 && state.spawnTimer <= 0.05) {
+    spawnEnemy();
+    state.director.horde -= 1;
+  }
+}
+
+function pickAlienType() {
+  if (state.director.horde > 0) return Math.random() < 0.82 ? "drone" : "ranger";
+  const roll = Math.random();
+  if (state.wave >= 4 && roll < 0.12 + state.director.intensity * 0.12) return "brute";
+  if (roll < 0.25 + state.wave * 0.025) return "ranger";
+  return "drone";
 }
 
 function loop(now) {
@@ -500,6 +679,15 @@ window.addEventListener("keydown", (event) => {
   if (event.key === " " || event.key === "Shift") event.preventDefault();
 });
 window.addEventListener("keyup", (event) => keys.delete(event.key.toLowerCase()));
+ui.loadout.forEach((button) => {
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    ui.loadout.forEach((item) => item.classList.remove("is-active"));
+    button.classList.add("is-active");
+    applyOperative(button.dataset.class);
+    updateUi();
+  });
+});
 canvas.addEventListener("pointermove", worldPointer);
 canvas.addEventListener("pointerdown", (event) => {
   worldPointer(event);

@@ -119,6 +119,23 @@ button:hover {
   background: rgba(244, 240, 222, 0.18);
 }
 
+.loadout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.loadout-button {
+  min-width: 82px;
+  margin-top: 0;
+}
+
+.loadout-button.is-active {
+  border-color: #d52828;
+  background: rgba(213, 40, 40, 0.22);
+}
+
 .overlay {
   position: absolute;
   inset: 0;

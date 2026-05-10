@@ -23,9 +23,21 @@
           <span class="label">TIME</span>
           <strong id="time">00:00</strong>
         </div>
+        <div>
+          <span class="label">OPERATIVE</span>
+          <strong id="operative">NCO</strong>
+        </div>
+        <div>
+          <span class="label">AMMO</span>
+          <strong id="ammo">30</strong>
+        </div>
       </section>
 
       <section class="hud hud-bottom">
+        <div class="meter">
+          <span class="label">HEALTH</span>
+          <span class="bar"><i id="health"></i></span>
+        </div>
         <div class="meter">
           <span class="label">FOCUS</span>
           <span class="bar"><i id="focus"></i></span>
@@ -36,7 +48,12 @@
         <div>
           <p class="kicker">ONE SHOT. ONE SHADOW.</p>
           <h1>Bullet Noir</h1>
-          <p class="status" id="status">Click to begin</p>
+          <p class="status" id="status">Choose an operative, then click to begin</p>
+          <div class="loadout" aria-label="Operative select">
+            <button class="loadout-button is-active" data-class="nco" type="button">NCO</button>
+            <button class="loadout-button" data-class="specialist" type="button">Heavy</button>
+            <button class="loadout-button" data-class="medic" type="button">Medic</button>
+          </div>
           <button id="restart" type="button" hidden>Restart</button>
         </div>
       </section>
