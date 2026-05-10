@@ -130,6 +130,7 @@
     let noirGain = null;
     let noirPulseTimer = null;
     const audioBuffers = {};
+    const noiseBuffers = {};
     const audioSampleSources = {
       playerGun: "audio/samples/gun1.wav",
       enemyGun: "audio/samples/gun2.wav",
@@ -332,6 +333,7 @@
 
     function playSfx(name, rate = 1) {
       unlockAudio();
+      if (isMobile && playProceduralSfx(name, rate)) return;
       const sound = sfx[name];
       if (playBufferSfx(name, rate)) return;
       if (!sound) return;
@@ -376,6 +378,94 @@
         gain.connect(audioCtx.destination);
         source.start(audioCtx.currentTime);
         return true;
+      } catch (error) {
+        return false;
+      }
+    }
+
+    function getNoiseBuffer(duration = 0.25) {
+      if (!audioCtx) return null;
+      const key = Math.round(duration * 1000);
+      if (noiseBuffers[key]) return noiseBuffers[key];
+      const length = Math.max(1, Math.floor(audioCtx.sampleRate * duration));
+      const buffer = audioCtx.createBuffer(1, length, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      let last = 0;
+      for (let i = 0; i < length; i++) {
+        const white = Math.random() * 2 - 1;
+        last = last * 0.72 + white * 0.28;
+        data[i] = last;
+      }
+      noiseBuffers[key] = buffer;
+      return buffer;
+    }
+
+    function playNoiseLayer({ duration, volume, type = "bandpass", frequency = 900, q = 1.4, start = 0, end = 0.0001 }) {
+      if (!audioCtx) return;
+      const now = audioCtx.currentTime;
+      const source = audioCtx.createBufferSource();
+      const filter = audioCtx.createBiquadFilter();
+      const gain = audioCtx.createGain();
+      source.buffer = getNoiseBuffer(duration);
+      filter.type = type;
+      filter.frequency.setValueAtTime(frequency, now);
+      filter.Q.setValueAtTime(q, now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(volume, now + 0.006);
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, end), now + duration);
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(audioCtx.destination);
+      source.start(now + start);
+      source.stop(now + start + duration);
+    }
+
+    function playToneLayer({ type = "sine", startFreq, endFreq, duration, volume, delay = 0 }) {
+      if (!audioCtx) return;
+      const now = audioCtx.currentTime + delay;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(startFreq, now);
+      osc.frequency.exponentialRampToValueAtTime(Math.max(20, endFreq), now + duration);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(volume, now + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + duration + 0.02);
+    }
+
+    function playProceduralSfx(name, rate = 1) {
+      try {
+        if (!audioCtx) return false;
+        if (audioCtx.state === "suspended" && audioCtx.resume) {
+          audioCtx.resume().then(() => playProceduralSfx(name, rate)).catch(() => {});
+          return true;
+        }
+        if (name === "playerGun") {
+          playNoiseLayer({ duration: 0.075, volume: 0.24, type: "bandpass", frequency: 1750 * rate, q: 0.9 });
+          playNoiseLayer({ duration: 0.045, volume: 0.12, type: "highpass", frequency: 3200 * rate, q: 0.8 });
+          playToneLayer({ type: "square", startFreq: 140 * rate, endFreq: 58 * rate, duration: 0.105, volume: 0.12 });
+          return true;
+        }
+        if (name === "enemyGun") {
+          playNoiseLayer({ duration: 0.09, volume: 0.18, type: "bandpass", frequency: 1250 * rate, q: 1 });
+          playToneLayer({ type: "square", startFreq: 110 * rate, endFreq: 44 * rate, duration: 0.11, volume: 0.09 });
+          return true;
+        }
+        if (name === "flamer") {
+          playNoiseLayer({ duration: 0.34, volume: 0.2, type: "lowpass", frequency: 520, q: 0.7 });
+          playToneLayer({ type: "sawtooth", startFreq: 92 * rate, endFreq: 35, duration: 0.28, volume: 0.09 });
+          return true;
+        }
+        if (name === "death") {
+          playNoiseLayer({ duration: 0.22, volume: 0.1, type: "bandpass", frequency: 520, q: 1.5 });
+          playToneLayer({ type: "triangle", startFreq: 230 * rate, endFreq: 65, duration: 0.36, volume: 0.12 });
+          return true;
+        }
+        return false;
       } catch (error) {
         return false;
       }
@@ -640,6 +730,9 @@
       if (noirPulseTimer || !audioCtx) return;
       const pulse = () => {
         if (!audioCtx || audioCtx.state === "suspended") return;
+        if (isMobile) {
+          playNoiseLayer({ duration: 0.42, volume: 0.018, type: "lowpass", frequency: 360, q: 0.5 });
+        }
         const now = audioCtx.currentTime;
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
