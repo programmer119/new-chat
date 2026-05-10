@@ -226,6 +226,7 @@
       const rect = canvas.getBoundingClientRect();
       mouse.x = event.clientX - rect.left;
       mouse.y = event.clientY - rect.top;
+      ensureAudio();
       if (state === "intro") {
         startIntroSequence();
         return;
@@ -235,7 +236,6 @@
         handleMapToolMouseDown(event);
         return;
       }
-      ensureAudio();
       if (state === "play" && handleGameMenuButtonClick(mouse.x, mouse.y)) return;
       if (state === "play" && handleSpecialForcesToggleClick(mouse.x, mouse.y)) return;
       if (handleCameraButtonClick(mouse.x, mouse.y)) return;
@@ -282,6 +282,7 @@
 
     function ensureAudio() {
       if (audioReady) {
+        if (!noirGain) startNoirBgm();
         unlockAudio();
         return;
       }
@@ -340,30 +341,30 @@
         let type = "square";
         let start = 420;
         let end = 110;
-        let volume = 0.035;
+        let volume = 0.055;
         let duration = 0.1;
         if (name === "playerGun") {
           type = "sawtooth";
           start = 620;
           end = 165;
-          volume = 0.045;
+          volume = 0.055;
           duration = 0.085;
         } else if (name === "enemyGun") {
           start = 370;
           end = 125;
-          volume = 0.033;
+          volume = 0.048;
           duration = 0.11;
         } else if (name === "flamer") {
           type = "sawtooth";
           start = 115;
           end = 36;
-          volume = 0.07;
+          volume = 0.105;
           duration = 0.24;
         } else if (name === "death") {
           type = "triangle";
           start = 210;
           end = 62;
-          volume = 0.05;
+          volume = 0.085;
           duration = 0.28;
         }
         osc.type = type;
@@ -460,13 +461,13 @@
         servo.frequency.setValueAtTime(760 - i * 60, now + offset - 0.07);
         servo.frequency.exponentialRampToValueAtTime(190, now + offset + 0.1);
         gain.gain.setValueAtTime(0.0001, now + offset);
-        gain.gain.exponentialRampToValueAtTime(0.18, now + offset + 0.008);
+        gain.gain.exponentialRampToValueAtTime(0.26, now + offset + 0.008);
         gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.42);
         grindGain.gain.setValueAtTime(0.0001, now + offset);
-        grindGain.gain.exponentialRampToValueAtTime(0.075, now + offset + 0.008);
+        grindGain.gain.exponentialRampToValueAtTime(0.12, now + offset + 0.008);
         grindGain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.24);
         servoGain.gain.setValueAtTime(0.0001, now + offset - 0.07);
-        servoGain.gain.exponentialRampToValueAtTime(0.035, now + offset - 0.02);
+        servoGain.gain.exponentialRampToValueAtTime(0.065, now + offset - 0.02);
         servoGain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.14);
         osc.connect(gain);
         grind.connect(grindGain);
@@ -495,6 +496,19 @@
           setTimeout(() => window.speechSynthesis.speak(utterance), Math.max(0, (when - audioCtx.currentTime) * 1000));
         }
       } catch (error) {}
+      try {
+        if (window.speechSynthesis && window.SpeechSynthesisUtterance) {
+          setTimeout(() => {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance("\ubc15\uac00");
+            utterance.lang = "ko-KR";
+            utterance.rate = 0.82;
+            utterance.pitch = 0.45;
+            utterance.volume = 1;
+            window.speechSynthesis.speak(utterance);
+          }, Math.max(0, (when - audioCtx.currentTime) * 1000));
+        }
+      } catch (error) {}
       const syllables = [0, 0.28];
       for (const [i, offset] of syllables.entries()) {
         const osc = audioCtx.createOscillator();
@@ -507,9 +521,9 @@
         osc.frequency.exponentialRampToValueAtTime(i === 0 ? 82 : 74, when + offset + 0.18);
         mod.frequency.setValueAtTime(i === 0 ? 58 : 46, when + offset);
         gain.gain.setValueAtTime(0.0001, when + offset);
-        gain.gain.exponentialRampToValueAtTime(0.055, when + offset + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.11, when + offset + 0.025);
         gain.gain.exponentialRampToValueAtTime(0.0001, when + offset + 0.22);
-        modGain.gain.value = 0.012;
+        modGain.gain.value = 0.028;
         mod.connect(modGain);
         osc.connect(gain);
         gain.connect(audioCtx.destination);
@@ -532,7 +546,7 @@
         audioCtx = new Ctx();
       }
       noirGain = audioCtx.createGain();
-      noirGain.gain.value = 0.018;
+      noirGain.gain.setValueAtTime(0.038, audioCtx.currentTime);
       noirGain.connect(audioCtx.destination);
       const notes = [55, 82.41, 110];
       for (const [i, freq] of notes.entries()) {
@@ -1401,9 +1415,13 @@
       updateIdleRaid(dt, Math.hypot(player.x - beforePlayerX, player.y - beforePlayerY), mouse.down || mouse.right || keys.has("KeyQ"));
 
       const worldMouse = screenToWorld(mouse.x, mouse.y);
-      const aimTarget = currentAimTarget(worldMouse);
+      let aimTarget = currentAimTarget(worldMouse);
       player.angle = Math.atan2(aimTarget.y - player.y, aimTarget.x - player.x);
-      updateCamera(dt, worldMouse);
+      updateCamera(dt, isMobile ? aimTarget : worldMouse);
+      if (isMobile && mobileControls.shoot) {
+        aimTarget = mobileAimWorldTarget();
+        player.angle = Math.atan2(aimTarget.y - player.y, aimTarget.x - player.x);
+      }
       updateAimRay(aimTarget);
       if (mouse.down || (isMobile && mobileControls.shoot)) fire();
       if (mouse.right || keys.has("KeyQ") || (isMobile && mobileControls.bomb)) throwBomb(aimTarget);
@@ -4684,6 +4702,19 @@
         const mobileMoveStickDoesNotMoveCursor =
           Math.abs(mobileControls.aimScreenX - draggedAimX) < 0.01 &&
           Math.abs(mobileControls.aimScreenY - draggedAimY) < 0.01;
+        camera.x = 40;
+        camera.y = 60;
+        player.x = 620;
+        player.y = 520;
+        mobileControls.aimScreenX = 520;
+        mobileControls.aimScreenY = 330;
+        mobileControls.shoot = true;
+        updateCamera(0.25, mobileAimWorldTarget());
+        const retargetAfterCamera = mobileAimWorldTarget();
+        const mobileAimRetargetsAfterCameraMove =
+          Math.abs(screenX(retargetAfterCamera.x) - mobileControls.aimScreenX) < 0.01 &&
+          Math.abs(screenY(retargetAfterCamera.y) - mobileControls.aimScreenY) < 0.01;
+        mobileControls.shoot = false;
         const synthSfxFallbackAvailable = typeof playSynthSfx === "function";
         const logoSoundUsesWebAudio = typeof playParkLogoSound === "function";
         state = "intro";
@@ -4752,6 +4783,7 @@
           mobileAimUnaffectedByMoveStick,
           mobileAimDragUsesTouchDelta,
           mobileMoveStickDoesNotMoveCursor,
+          mobileAimRetargetsAfterCameraMove,
           synthSfxFallbackAvailable,
           logoSoundUsesWebAudio,
           introCompletesToMenu
