@@ -194,6 +194,22 @@
 	<textarea id="output" rows="10" cols="100" readonly="readonly" style="resize:none"></textarea>
 
 	<script type="text/javascript">//<![CDATA[
+		(function() {
+			var getGamepads = navigator.getGamepads || navigator.webkitGetGamepads || navigator.mozGetGamepads;
+			var safeGetGamepads = function() {
+				var pads = getGamepads ? getGamepads.call(navigator) : [];
+				return pads || [];
+			};
+			try {
+				Object.defineProperty(Navigator.prototype, "getGamepads", {
+					value: safeGetGamepads,
+					configurable: true
+				});
+			} catch (e) {
+				navigator.getGamepads = safeGetGamepads;
+			}
+		})();
+
 		var Presentation = (function() {
 			var statusElement = document.getElementById("status");
 			var outputElement = document.getElementById("output");
