@@ -128,6 +128,7 @@
     let audioReady = false;
     let audioCtx = null;
     let noirGain = null;
+    let noirPulseTimer = null;
     const sfx = {};
 
     const world = { w: 2200, h: 1600 };
@@ -331,10 +332,27 @@
       }
     }
 
+    function afterAudioResume(callback) {
+      try {
+        if (!audioCtx) return;
+        if (audioCtx.state === "suspended" && audioCtx.resume) {
+          const resumed = audioCtx.resume();
+          if (resumed && resumed.then) {
+            resumed.then(callback).catch(() => {});
+            return;
+          }
+        }
+        callback();
+      } catch (error) {}
+    }
+
     function playSynthSfx(name, rate = 1) {
       try {
         if (!audioCtx) return;
-        if (audioCtx.state === "suspended" && audioCtx.resume) audioCtx.resume();
+        if (audioCtx.state === "suspended" && audioCtx.resume) {
+          audioCtx.resume().then(() => playSynthSfx(name, rate)).catch(() => {});
+          return;
+        }
         const now = audioCtx.currentTime;
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
@@ -440,7 +458,10 @@
         audioCtx = new Ctx();
       }
       if (!audioCtx) return;
-      audioCtx.resume && audioCtx.resume();
+      if (audioCtx.state === "suspended" && audioCtx.resume) {
+        audioCtx.resume().then(() => playParkLogoSound()).catch(() => {});
+        return;
+      }
       const now = audioCtx.currentTime;
       playSynthSfx("flamer", 1.85);
       const impacts = [0.52, 1.08, 1.64, 2.2];
@@ -536,17 +557,21 @@
     }
 
     function startNoirBgm() {
-      if (audioCtx) {
-        audioCtx.resume && audioCtx.resume();
-        if (noirGain) return;
-      }
       if (!audioCtx) {
         const Ctx = window.AudioContext || window.webkitAudioContext;
         if (!Ctx) return;
         audioCtx = new Ctx();
       }
+      if (audioCtx.state === "suspended" && audioCtx.resume) {
+        audioCtx.resume().then(() => startNoirBgm()).catch(() => {});
+        return;
+      }
+      if (noirGain) {
+        if (!noirPulseTimer) startNoirPulse();
+        return;
+      }
       noirGain = audioCtx.createGain();
-      noirGain.gain.setValueAtTime(0.038, audioCtx.currentTime);
+      noirGain.gain.setValueAtTime(0.07, audioCtx.currentTime);
       noirGain.connect(audioCtx.destination);
       const notes = [55, 82.41, 110];
       for (const [i, freq] of notes.entries()) {
@@ -559,6 +584,29 @@
         gain.connect(noirGain);
         osc.start();
       }
+      startNoirPulse();
+    }
+
+    function startNoirPulse() {
+      if (noirPulseTimer || !audioCtx) return;
+      const pulse = () => {
+        if (!audioCtx || audioCtx.state === "suspended") return;
+        const now = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(146.83, now);
+        osc.frequency.exponentialRampToValueAtTime(98, now + 0.42);
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.045, now + 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 0.58);
+      };
+      pulse();
+      noirPulseTimer = setInterval(pulse, 4200);
     }
 
     function resetWorld() {
@@ -3320,23 +3368,31 @@
       ctx.moveTo(aimRay.x1, aimRay.y1);
       ctx.lineTo(aimRay.x2, aimRay.y2);
       ctx.stroke();
+      const marker = mobileAimMarkerWorld();
       ctx.globalCompositeOperation = "source-over";
       ctx.strokeStyle = "rgba(255,255,255,0.86)";
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(aimRay.x2 - 11, aimRay.y2);
-      ctx.lineTo(aimRay.x2 - 3, aimRay.y2);
-      ctx.moveTo(aimRay.x2 + 3, aimRay.y2);
-      ctx.lineTo(aimRay.x2 + 11, aimRay.y2);
-      ctx.moveTo(aimRay.x2, aimRay.y2 - 11);
-      ctx.lineTo(aimRay.x2, aimRay.y2 - 3);
-      ctx.moveTo(aimRay.x2, aimRay.y2 + 3);
-      ctx.lineTo(aimRay.x2, aimRay.y2 + 11);
+      ctx.moveTo(marker.x - 11, marker.y);
+      ctx.lineTo(marker.x - 3, marker.y);
+      ctx.moveTo(marker.x + 3, marker.y);
+      ctx.lineTo(marker.x + 11, marker.y);
+      ctx.moveTo(marker.x, marker.y - 11);
+      ctx.lineTo(marker.x, marker.y - 3);
+      ctx.moveTo(marker.x, marker.y + 3);
+      ctx.lineTo(marker.x, marker.y + 11);
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(aimRay.x2, aimRay.y2, 5, 0, Math.PI * 2);
+      ctx.arc(marker.x, marker.y, 5, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
+    }
+
+    function mobileAimMarkerWorld() {
+      if (isMobile && mobileControls.shoot && (mobileControls.aimScreenX || mobileControls.aimScreenY)) {
+        return screenToWorld(mobileControls.aimScreenX, mobileControls.aimScreenY);
+      }
+      return { x: aimRay.x2, y: aimRay.y2 };
     }
 
     function drawParticles() {
