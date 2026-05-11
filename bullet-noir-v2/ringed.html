@@ -4795,6 +4795,10 @@
           startGame();
           return;
         }
+        if (state === "maptool") {
+          handleMapToolTouchStart(p);
+          return;
+        }
       if (state !== "play") continue;
       if (handleGameMenuButtonClick(p.x, p.y)) return;
       if (handleSpecialForcesToggleClick(p.x, p.y)) return;
@@ -4821,12 +4825,20 @@
     function handleTouchMove(event) {
       if (!isMobile) return;
       event.preventDefault();
+      if (state === "maptool") {
+        for (const touch of event.changedTouches) handleMapToolTouchMove(touchPoint(touch));
+        return;
+      }
       updateTouchPositions(event);
     }
 
     function handleTouchEnd(event) {
       if (!isMobile) return;
       event.preventDefault();
+      if (state === "maptool") {
+        for (const touch of event.changedTouches) handleMapToolTouchEnd(touchPoint(touch));
+        return;
+      }
       for (const touch of event.changedTouches) {
         if (touch.identifier === mobileControls.moveId) {
           mobileControls.moveId = null;
@@ -4858,6 +4870,26 @@
         mobileControls.aimTouchX = 0;
         mobileControls.aimTouchY = 0;
       }
+    }
+
+    function handleMapToolTouchStart(p) {
+      mouse.x = p.x;
+      mouse.y = p.y;
+      updateMapToolPreview();
+      handleMapToolMouseDown({ button: 0 });
+    }
+
+    function handleMapToolTouchMove(p) {
+      mouse.x = p.x;
+      mouse.y = p.y;
+      updateMapToolPreview();
+    }
+
+    function handleMapToolTouchEnd(p) {
+      mouse.x = p.x;
+      mouse.y = p.y;
+      updateMapToolPreview();
+      handleMapToolMouseUp({ button: 0 });
     }
 
     function updateTouchPositions(event) {
