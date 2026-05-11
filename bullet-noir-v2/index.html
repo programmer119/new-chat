@@ -181,6 +181,7 @@
     const iceStorms = [];
     const enemies = [];
     const particles = [];
+    const dashBursts = [];
     const flashes = [];
     const killLights = [];
     const blastLights = [];
@@ -194,7 +195,7 @@
     const doors = [];
     const fixtures = [];
     let fixtureBoost = 0;
-    const weaponNames = { rifle: "RIFLE", bomb: "BOMB", flamer: "FLAMER", ice: "ICE" };
+    const weaponNames = { rifle: "RIFLE", bomb: "BOMB", flamer: "FLAMER", ice: "ICE", barricade: "BARR" };
     let itemDropMode = true;
     let modeVoiceSelect = false;
     let selectedWeapon = "rifle";
@@ -203,6 +204,7 @@
     let bombCount = 1;
     let flameAmmo = 0;
     let iceAmmo = 0;
+    let barricadeCount = 0;
     let dashCharges = 3;
     let dashRecharge = 0;
     const lightCanvas = document.createElement("canvas");
@@ -962,6 +964,7 @@
       iceStorms.length = 0;
       enemies.length = 0;
       particles.length = 0;
+      dashBursts.length = 0;
       flashes.length = 0;
       killLights.length = 0;
       blastLights.length = 0;
@@ -991,6 +994,7 @@
       bombCount = 1;
       flameAmmo = 0;
       iceAmmo = 0;
+      barricadeCount = 0;
       modeVoiceSelect = false;
       lastIdleX = player.x;
       lastIdleY = player.y;
@@ -1169,7 +1173,7 @@
         walls: walls.map(({ x, y, w, h }) => ({ x, y, w, h })),
         doors: doors.map(({ x, y, w, h, axis }) => ({ x, y, w, h, axis })),
         fixtures: fixtures.map(({ x, y, w, h, angle, radius, energy }) => ({ x, y, w, h, angle, radius, energy })),
-        props: props.map(({ x, y, type, s, a }) => ({ x, y, type, s, a }))
+        props: props.filter((prop) => prop.type !== "barricade").map(({ x, y, type, s, a, hp, maxHp }) => ({ x, y, type, s, a, hp, maxHp }))
       };
     }
 
@@ -1206,8 +1210,11 @@
             y: prop.y,
             type: prop.type === "rock" ? "rock" : "crate",
             s: Number.isFinite(prop.s) ? prop.s : 1,
-            a: Number.isFinite(prop.a) ? prop.a : 0
+            a: Number.isFinite(prop.a) ? prop.a : 0,
+            hp: Number.isFinite(prop.hp) ? prop.hp : undefined,
+            maxHp: Number.isFinite(prop.maxHp) ? prop.maxHp : undefined
           });
+          ensurePropHealth(props[props.length - 1]);
         }
       }
     }
@@ -1263,6 +1270,7 @@
           s: 0.55 + Math.random() * 0.55,
           a: Math.random() * Math.PI * 2
         };
+        ensurePropHealth(prop);
         if (canPlaceProp(prop)) {
           props.push(prop);
           return;
@@ -1411,6 +1419,7 @@
       if (bombCount > 0) list.push("bomb");
       if (flameAmmo > 0) list.push("flamer");
       if (iceAmmo > 0) list.push("ice");
+      if (barricadeCount > 0) list.push("barricade");
       return list;
     }
 
@@ -1418,6 +1427,7 @@
       if (selectedWeapon === "bomb" && bombCount <= 0) selectedWeapon = "rifle";
       if (selectedWeapon === "flamer" && flameAmmo <= 0) selectedWeapon = "rifle";
       if (selectedWeapon === "ice" && iceAmmo <= 0) selectedWeapon = "rifle";
+      if (selectedWeapon === "barricade" && barricadeCount <= 0) selectedWeapon = "rifle";
     }
 
     function cycleWeapon() {
@@ -1441,7 +1451,53 @@
       if (weapon === "bomb") return "x" + bombCount;
       if (weapon === "flamer") return flameAmmo + "";
       if (weapon === "ice") return "x" + iceAmmo;
+      if (weapon === "barricade") return "x" + barricadeCount;
       return "";
+    }
+
+    function barricadePlacement() {
+      const target = isMobile ? mobileAimWorldTarget() : screenToWorld(mouse.x, mouse.y);
+      const dx = target.x - player.x;
+      const dy = target.y - player.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const dist = clamp(d, 70, 190);
+      const x = clamp(player.x + dx / d * dist, 70, world.w - 70);
+      const y = clamp(player.y + dy / d * dist, 70, world.h - 70);
+      const angle = Math.atan2(dy, dx) + Math.PI / 2;
+      const prop = { x, y, type: "barricade", s: 1, a: angle, w: 88, h: 24, hp: 10, maxHp: 10, buildTime: 3 };
+      return { prop, valid: canPlaceBarricade(prop) };
+    }
+
+    function canPlaceBarricade(prop) {
+      if (barricadeCount <= 0) return false;
+      const rect = propCollisionRect(prop);
+      if (circleRect(player.x, player.y, player.r + 10, rect)) return false;
+      for (const wall of walls) if (rectOverlap(rect, wall)) return false;
+      for (const door of doors) {
+        if (door.open < 0.72) {
+          for (const part of doorCollisionRects(door)) if (rectOverlap(rect, part)) return false;
+        }
+      }
+      for (const prop2 of props) if (propBlocksMovement(prop2) && rectOverlap(rect, propCollisionRect(prop2))) return false;
+      for (const enemy of enemies) if (circleRect(enemy.x, enemy.y, collisionRadius(enemy) + 4, rect)) return false;
+      return true;
+    }
+
+    function placeBarricadeFromAim() {
+      if (barricadeCount <= 0) return false;
+      const placement = barricadePlacement();
+      if (!placement.valid) {
+        voiceCommandStatus = "CANNOT PLACE";
+        voiceCommandStatusTimer = 1.1;
+        return false;
+      }
+      props.push(placement.prop);
+      barricadeCount--;
+      if (selectedWeapon === "barricade" && barricadeCount <= 0) selectedWeapon = "rifle";
+      voiceCommandStatus = "BARRICADE";
+      voiceCommandStatusTimer = 1.1;
+      burst(placement.prop.x, placement.prop.y, "#dce8ee", 8);
+      return true;
     }
 
     function fire() {
@@ -1455,6 +1511,7 @@
         fireIceStorm();
         return;
       }
+      if (selectedWeapon === "barricade") return;
       fireRifle();
     }
 
@@ -1487,6 +1544,8 @@
       if (hit.enemy) {
         hit.enemy.hp -= 44;
         burst(hit.x, hit.y, "#9f2a24", 5);
+      } else if (hit.prop && hit.prop.type === "crate") {
+        damageProp(hit.prop, 1, hit.x, hit.y);
       } else if (hit.solid) {
         burst(hit.x, hit.y, "#f4efe8", 5);
       }
@@ -1509,6 +1568,54 @@
         });
       }
       shake = Math.max(shake, 4);
+    }
+
+    function damageProp(prop, amount, x = prop.x, y = prop.y) {
+      if (!prop || prop.type !== "crate") return;
+      ensurePropHealth(prop);
+      prop.hp -= amount;
+      prop.hitFlash = 0.18;
+      burst(x, y, "#d0b58a", 5);
+      if (prop.hp <= 0) destroyProp(prop);
+    }
+
+    function addDashBurst(x, y, angle) {
+      dashBursts.push({ x, y, angle, life: 0.28, maxLife: 0.28 });
+      for (let i = 0; i < 12; i++) {
+        const a = angle + Math.PI + (Math.random() - 0.5) * 1.4;
+        particles.push({
+          x,
+          y,
+          vx: Math.cos(a) * (120 + Math.random() * 180),
+          vy: Math.sin(a) * (120 + Math.random() * 180),
+          life: 0.18 + Math.random() * 0.12,
+          color: "#d9f1ff",
+          r: 2 + Math.random() * 3
+        });
+      }
+    }
+
+    function damageBarricade(prop, amount, x = prop.x, y = prop.y) {
+      if (!prop || prop.type !== "barricade") return;
+      ensurePropHealth(prop);
+      prop.hp -= amount;
+      prop.hitFlash = 0.16;
+      burst(x, y, "#c9d7dd", 4);
+      if (prop.hp <= 0) destroyProp(prop);
+    }
+
+    function destroyProp(prop) {
+      const index = props.indexOf(prop);
+      if (index < 0) return;
+      if (prop.type === "crate") {
+        const pieces = prop.s >= 0.9 ? 4 : 2;
+        barricadeCount += pieces;
+        voiceCommandStatus = "BARR +" + pieces;
+        voiceCommandStatusTimer = 1.3;
+      }
+      burst(prop.x, prop.y, prop.type === "barricade" ? "#dce8ee" : "#c9aa78", 18);
+      props.splice(index, 1);
+      normalizeSelectedWeapon();
     }
 
     function firePlayerFlamer() {
@@ -1707,23 +1814,24 @@
       return hasLineOfSight(x1, y1, x2, y2, distance);
     }
 
-    function hasLineOfSight(x1, y1, x2, y2, distance) {
+    function hasLineOfSight(x1, y1, x2, y2, distance, options = {}) {
       const dx = (x2 - x1) / (distance || 1);
       const dy = (y2 - y1) / (distance || 1);
-      for (const rect of explosionBlockers()) {
+      for (const rect of explosionBlockers(options)) {
         const t = rayRect(x1, y1, dx, dy, rect);
         if (t !== null && t > 3 && t < distance - 8) return false;
       }
       return true;
     }
 
-    function explosionBlockers() {
+    function explosionBlockers(options = {}) {
       const blockers = walls.slice();
       for (const door of doors) {
         if (door.open >= 0.72) continue;
         for (const rect of doorCollisionRects(door)) blockers.push(rect);
       }
       for (const prop of props) {
+        if (options.ignoreBarricades && prop.type === "barricade") continue;
         if (propBlocksMovement(prop)) blockers.push(propCollisionRect(prop));
       }
       return blockers;
@@ -1946,6 +2054,7 @@
       if (wantsDash && dashCharges > 0 && player.dodge <= 0 && (mx || my)) {
         player.dodge = 0.22;
         player.invuln = 0.28;
+        addDashBurst(player.x, player.y, Math.atan2(my, mx));
         dashCharges = Math.max(0, dashCharges - 1);
         if (dashCharges <= 0) dashRecharge = 5;
       }
@@ -2055,7 +2164,7 @@
         if (!seesPlayer && td < 42) e.alert = Math.min(e.alert, 0.7);
         e.bite -= dt;
         e.shoot -= dt;
-        const hasShotLine = d < 720 && hasLineOfSight(e.x, e.y, player.x, player.y, d);
+        const hasShotLine = d < 720 && hasLineOfSight(e.x, e.y, player.x, player.y, d, { ignoreBarricades: true });
         if (e.kind === "shooter" && e.shoot <= 0 && d < 620 && hasShotLine) {
           enemyFire(e, dx / d, dy / d);
           e.shoot = e.fast ? 1.25 + Math.random() * 0.8 : 1.65 + Math.random() * 1.1;
@@ -2099,6 +2208,14 @@
         p.vy *= Math.pow(0.04, dt);
         if (p.solidStop && pointInsideSolid(p.x, p.y)) p.life = 0;
         if (p.life <= 0) particles.splice(i, 1);
+      }
+      for (let i = dashBursts.length - 1; i >= 0; i--) {
+        dashBursts[i].life -= dt;
+        if (dashBursts[i].life <= 0) dashBursts.splice(i, 1);
+      }
+      for (const prop of props) {
+        if (prop.hitFlash > 0) prop.hitFlash = Math.max(0, prop.hitFlash - dt);
+        if (prop.type === "barricade" && prop.buildTime > 0) prop.buildTime = Math.max(0, prop.buildTime - dt);
       }
       updatePickups(dt);
       updateSpeechBubbles(dt);
@@ -2146,8 +2263,9 @@
       playSfx("enemyGun", enemy.fast ? 1.08 : 0.86);
       const sx = enemy.x + dx * (enemy.r + 16);
       const sy = enemy.y + dy * (enemy.r + 16);
-      const px = player.x - dx * 10;
-      const py = player.y - dy * 10;
+      const target = raycastEnemyShot(sx, sy, dx, dy, Math.hypot(player.x - sx, player.y - sy));
+      const px = target.x;
+      const py = target.y;
       enemyTracers.push({
         x1: sx,
         y1: sy,
@@ -2156,6 +2274,10 @@
         life: 0.12,
         maxLife: 0.12
       });
+      if (target.prop && target.prop.type === "barricade") {
+        damageBarricade(target.prop, 1, target.x, target.y);
+        return;
+      }
       if (player.invuln <= 0) {
         player.hp -= enemy.fast ? 5 : 8;
         player.invuln = 0.08;
@@ -2414,11 +2536,11 @@
     }
 
     function raycastShot(x, y, dx, dy, maxDist) {
-      let best = { t: maxDist, x: x + dx * maxDist, y: y + dy * maxDist, enemy: null, solid: null };
+      let best = { t: maxDist, x: x + dx * maxDist, y: y + dy * maxDist, enemy: null, solid: null, prop: null };
       for (const wall of walls) {
         const t = rayRect(x, y, dx, dy, wall);
         if (t !== null && t > 0 && t < best.t) {
-          best = { t, x: x + dx * t, y: y + dy * t, enemy: null, solid: wall };
+          best = { t, x: x + dx * t, y: y + dy * t, enemy: null, solid: wall, prop: null };
         }
       }
       for (const door of doors) {
@@ -2426,22 +2548,36 @@
         for (const rect of doorCollisionRects(door)) {
           const t = rayRect(x, y, dx, dy, rect);
           if (t !== null && t > 0 && t < best.t) {
-            best = { t, x: x + dx * t, y: y + dy * t, enemy: null, solid: rect };
+            best = { t, x: x + dx * t, y: y + dy * t, enemy: null, solid: rect, prop: null };
           }
         }
       }
       for (const prop of props) {
         if (!propBlocksMovement(prop)) continue;
+        if (prop.type === "barricade") continue;
         const rect = propCollisionRect(prop);
         const t = rayRect(x, y, dx, dy, rect);
         if (t !== null && t > 0 && t < best.t) {
-          best = { t, x: x + dx * t, y: y + dy * t, enemy: null, solid: rect };
+          best = { t, x: x + dx * t, y: y + dy * t, enemy: null, solid: rect, prop };
         }
       }
       for (const enemy of enemies) {
         const t = rayCircle(x, y, dx, dy, enemy.x, enemy.y, enemy.r + 6);
         if (t !== null && t > 0 && t < best.t) {
-          best = { t, x: x + dx * t, y: y + dy * t, enemy, solid: null };
+          best = { t, x: x + dx * t, y: y + dy * t, enemy, solid: null, prop: null };
+        }
+      }
+      return best;
+    }
+
+    function raycastEnemyShot(x, y, dx, dy, maxDist) {
+      let best = { t: maxDist, x: x + dx * maxDist, y: y + dy * maxDist, prop: null };
+      for (const prop of props) {
+        if (prop.type !== "barricade") continue;
+        const rect = propCollisionRect(prop);
+        const t = rayRect(x, y, dx, dy, rect);
+        if (t !== null && t > 0 && t < best.t) {
+          best = { t, x: x + dx * t, y: y + dy * t, prop };
         }
       }
       return best;
@@ -2821,12 +2957,28 @@
     }
 
     function propBlocksMovement(prop) {
-      return prop.type === "crate";
+      return prop.type === "crate" || prop.type === "barricade";
     }
 
     function propCollisionRect(prop) {
+      if (prop.type === "barricade") {
+        const w = prop.w || 82;
+        const h = prop.h || 24;
+        return { x: prop.x - w / 2, y: prop.y - h / 2, w, h };
+      }
       const size = 34 * prop.s;
       return { x: prop.x - size / 2, y: prop.y - size / 2, w: size, h: size };
+    }
+
+    function ensurePropHealth(prop) {
+      if (prop.hp !== undefined && prop.maxHp !== undefined) return;
+      if (prop.type === "barricade") {
+        prop.maxHp = 10;
+        prop.hp = 10;
+      } else if (prop.type === "crate") {
+        prop.maxHp = prop.s >= 0.9 ? 5 : 3;
+        prop.hp = prop.maxHp;
+      }
     }
 
     function isInDoorApproach(entity, door) {
@@ -3238,6 +3390,7 @@
       drawPickups();
       drawAimLaser();
       for (const b of bullets) drawBullet(b);
+      drawBarricadePreview();
       drawTracers();
       drawEnemyTracers();
       drawFlameBursts();
@@ -3245,6 +3398,7 @@
       for (const e of enemies) drawEnemy(e);
       drawSpeechBubbles();
       drawPlayer();
+      drawDashBursts();
       drawParticles();
       drawOriginalFlashlightLayer();
       ctx.save();
@@ -3362,14 +3516,18 @@
 
     function drawProps() {
       for (const p of props) {
+        ensurePropHealth(p);
         const img = assets[p.type];
-        const s = 48 * p.s;
         ctx.save();
         ctx.translate(p.x, p.y);
         ctx.rotate(p.a);
-        if (img) {
+        if (p.type === "barricade") {
+          drawBarricadeProp(p);
+        } else if (img) {
+          const s = 48 * p.s;
           ctx.drawImage(img, -s / 2, -s / 2, s, s * img.height / img.width);
         } else if (p.type === "crate") {
+          const s = 48 * p.s;
           drawCrateFallback(s);
         }
         ctx.restore();
@@ -3379,6 +3537,8 @@
     function drawBlockingPropOverlays() {
       for (const p of props) {
         if (!propBlocksMovement(p)) continue;
+        if (p.type === "barricade") continue;
+        ensurePropHealth(p);
         const img = assets[p.type];
         const s = 48 * p.s;
         ctx.save();
@@ -3387,6 +3547,7 @@
         ctx.globalAlpha = 0.88;
         if (img) ctx.drawImage(img, -s / 2, -s / 2, s, s * img.height / img.width);
         else drawCrateFallback(s);
+        drawCrateDamage(p, s);
         ctx.globalAlpha = 1;
         ctx.strokeStyle = "rgba(235, 238, 230, 0.72)";
         ctx.lineWidth = 1.6;
@@ -3407,6 +3568,120 @@
       ctx.moveTo(s * 0.34, -s * 0.34);
       ctx.lineTo(-s * 0.34, s * 0.34);
       ctx.stroke();
+    }
+
+    function drawCrateDamage(prop, s) {
+      ensurePropHealth(prop);
+      const damage = 1 - prop.hp / prop.maxHp;
+      if (damage <= 0.02 && !prop.hitFlash) return;
+      ctx.save();
+      ctx.globalAlpha = 0.35 + damage * 0.45 + (prop.hitFlash || 0) * 1.8;
+      ctx.strokeStyle = "rgba(20, 12, 8, 0.95)";
+      ctx.lineWidth = 1.5 + damage * 2;
+      const cracks = Math.ceil(damage * 5);
+      for (let i = 0; i < cracks; i++) {
+        const x = -s * 0.32 + i * s * 0.16;
+        ctx.beginPath();
+        ctx.moveTo(x, -s * 0.36);
+        ctx.lineTo(x + s * 0.12, -s * 0.1 + i * 3);
+        ctx.lineTo(x - s * 0.02, s * 0.34);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    function drawBarricadeProp(prop) {
+      ensurePropHealth(prop);
+      const w = prop.w || 82;
+      const h = prop.h || 24;
+      const build = prop.buildTime > 0 ? 1 - prop.buildTime / 3 : 1;
+      const damage = 1 - prop.hp / prop.maxHp;
+      ctx.save();
+      ctx.globalAlpha = 0.42 + build * 0.58;
+      ctx.fillStyle = prop.hitFlash > 0 ? "rgba(255, 238, 190, 0.96)" : "rgba(76, 82, 86, 0.96)";
+      ctx.strokeStyle = "rgba(226, 236, 240, 0.82)";
+      ctx.lineWidth = 2;
+      roundRect(-w / 2, -h / 2, w, h, 5);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(20,24,28,0.72)";
+      ctx.lineWidth = 3;
+      for (let i = -1; i <= 1; i++) {
+        ctx.beginPath();
+        ctx.moveTo(-w * 0.36, i * h * 0.22);
+        ctx.lineTo(w * 0.36, i * h * 0.22);
+        ctx.stroke();
+      }
+      if (damage > 0.05) {
+        ctx.strokeStyle = "rgba(8, 10, 12, " + (0.55 + damage * 0.35) + ")";
+        ctx.lineWidth = 1.3 + damage * 2;
+        for (let i = 0; i < Math.ceil(damage * 5); i++) {
+          ctx.beginPath();
+          ctx.moveTo(-w * 0.35 + i * w * 0.16, -h * 0.34);
+          ctx.lineTo(-w * 0.2 + i * w * 0.12, h * 0.28);
+          ctx.stroke();
+        }
+      }
+      if (prop.buildTime > 0) {
+        const bang = Math.sin(performance.now() * 0.018) * 0.5 + 0.5;
+        ctx.fillStyle = "rgba(255, 230, 140, " + (0.35 + bang * 0.35) + ")";
+        ctx.beginPath();
+        ctx.arc(-w * 0.38 + bang * w * 0.76, -h * 0.8, 5 + bang * 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    function drawBarricadePreview() {
+      if (selectedWeapon !== "barricade" || barricadeCount <= 0) return;
+      if (isMobile && !mobileControls.shoot) return;
+      const { prop, valid } = barricadePlacement();
+      ctx.save();
+      ctx.translate(prop.x, prop.y);
+      ctx.rotate(prop.a);
+      ctx.globalAlpha = valid ? 0.62 : 0.72;
+      ctx.fillStyle = valid ? "rgba(190, 230, 245, 0.38)" : "rgba(255, 58, 48, 0.36)";
+      ctx.strokeStyle = valid ? "rgba(225,245,255,0.9)" : "rgba(255, 95, 80, 0.95)";
+      ctx.lineWidth = 2.2;
+      roundRect(-prop.w / 2, -prop.h / 2, prop.w, prop.h, 5);
+      ctx.fill();
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      if (!valid) {
+        ctx.beginPath();
+        ctx.moveTo(-prop.w * 0.42, -prop.h * 0.42);
+        ctx.lineTo(prop.w * 0.42, prop.h * 0.42);
+        ctx.moveTo(prop.w * 0.42, -prop.h * 0.42);
+        ctx.lineTo(-prop.w * 0.42, prop.h * 0.42);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    function drawDashBursts() {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      for (const burstItem of dashBursts) {
+        const alpha = Math.max(0, burstItem.life / burstItem.maxLife);
+        ctx.save();
+        ctx.translate(burstItem.x, burstItem.y);
+        ctx.rotate(burstItem.angle);
+        ctx.strokeStyle = "rgba(210, 242, 255, " + (0.66 * alpha) + ")";
+        ctx.fillStyle = "rgba(145, 210, 255, " + (0.18 * alpha) + ")";
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 4; i++) {
+          const offset = (i - 1.5) * 12;
+          ctx.beginPath();
+          ctx.moveTo(-34 - i * 8, offset);
+          ctx.lineTo(-4, offset * 0.35);
+          ctx.stroke();
+        }
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 34 + (1 - alpha) * 18, 18 + (1 - alpha) * 8, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.restore();
     }
 
     function drawFixtureBodies() {
@@ -4414,7 +4689,7 @@
       const ammoText = selectedWeapon === "rifle" ? (rifleReload > 0 ? "RELOAD " + rifleReload.toFixed(1) : rifleAmmo + "/60") :
         selectedWeapon === "bomb" ? "x" + bombCount :
         selectedWeapon === "flamer" ? flameAmmo + "/120+" :
-        "x" + iceAmmo;
+        selectedWeapon === "ice" ? "x" + iceAmmo : "x" + barricadeCount;
       ctx.fillText("MODE " + (itemDropMode ? "ITEM" : "NORMAL") + "  " + weaponNames[selectedWeapon] + " " + ammoText, 30, 112);
       ctx.fillStyle = bombCooldown > 0 ? "#9aa1aa" : "#f4d89a";
       ctx.fillText("E Weapon / Q Bomb", 180, 92);
@@ -4849,6 +5124,7 @@
         }
         if (touch.identifier === mobileControls.aimId) {
           if (selectedWeapon === "bomb") throwBomb(mobileAimWorldTarget());
+          if (selectedWeapon === "barricade") placeBarricadeFromAim();
           mobileControls.aimId = null;
         }
         if (touch.identifier === mobileControls.weaponTouchId) {
@@ -5203,7 +5479,9 @@
       } else if (item.type === "fixture") {
         fixtures.push(item);
       } else if (item.type === "prop") {
-        props.push({ x: item.x, y: item.y, type: item.propType, s: item.s, a: item.a });
+        const prop = { x: item.x, y: item.y, type: item.propType, s: item.s, a: item.a };
+        ensurePropHealth(prop);
+        props.push(prop);
       }
       mapTool.status = "Item placed.";
       mapTool.statusTime = 1.4;
@@ -5427,12 +5705,13 @@
       const savedFizzles = fizzles.slice();
       const savedFlameBursts = flameBursts.slice();
       const savedIceStorms = iceStorms.slice();
+      const savedDashBursts = dashBursts.slice();
       const savedState = state;
       const savedIntroTimer = introTimer;
       const savedIntroStarted = introStarted;
       const savedIntroSoundStarted = introSoundStarted;
       const savedCamera = { x: camera.x, y: camera.y, zoom: camera.zoom };
-      const savedInventory = { selectedWeapon, rifleAmmo, rifleReload, bombCount, flameAmmo, iceAmmo, itemDropMode, dashCharges, dashRecharge };
+      const savedInventory = { selectedWeapon, rifleAmmo, rifleReload, bombCount, flameAmmo, iceAmmo, barricadeCount, itemDropMode, dashCharges, dashRecharge };
       try {
         walls.length = 0;
         doors.length = 0;
@@ -5447,6 +5726,7 @@
         fizzles.length = 0;
         flameBursts.length = 0;
         iceStorms.length = 0;
+        dashBursts.length = 0;
         iceStorms.length = 0;
         addWall(500, 500, 42, 220);
         addDoor(430, 740, 42, 180, "v");
@@ -5862,6 +6142,7 @@
         for (const fizzle of savedFizzles) fizzles.push(fizzle);
         for (const flame of savedFlameBursts) flameBursts.push(flame);
         for (const storm of savedIceStorms) iceStorms.push(storm);
+        for (const dash of savedDashBursts) dashBursts.push(dash);
         state = savedState;
         introTimer = savedIntroTimer;
         introStarted = savedIntroStarted;
@@ -5875,6 +6156,7 @@
         bombCount = savedInventory.bombCount;
         flameAmmo = savedInventory.flameAmmo;
         iceAmmo = savedInventory.iceAmmo;
+        barricadeCount = savedInventory.barricadeCount;
         itemDropMode = savedInventory.itemDropMode;
         dashCharges = savedInventory.dashCharges;
         dashRecharge = savedInventory.dashRecharge;
