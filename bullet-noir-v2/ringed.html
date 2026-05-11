@@ -108,6 +108,7 @@
     let voiceRecognitionStarted = false;
     let voiceCommandStatus = "";
     let voiceCommandStatusTimer = 0;
+    let voiceCommandFlash = 0;
     let raidAlarmTimer = 0;
     const isMobile = detectMobileDevice();
     const mobileControls = {
@@ -365,18 +366,22 @@
         .replace(/\s+/g, "")
         .replace(/[.,!?]/g, "");
       if (!command) return false;
-      if (command.includes("스페셜온") || command.includes("스페셜켜") || command.includes("specialon")) {
-        setSpecialForcesEnabled(true, "SPECIAL ON");
+      const specialOn = "\uc2a4\ud398\uc15c\uc628";
+      const specialTurnOn = "\uc2a4\ud398\uc15c\ucf1c";
+      const specialOff = "\uc2a4\ud398\uc15c\uc624\ud504";
+      const specialTurnOff = "\uc2a4\ud398\uc15c\uaebc";
+      if (command.includes(specialOn) || command.includes(specialTurnOn) || command.includes("specialon")) {
+        setSpecialForcesEnabled(true, "SPECIAL ON", true);
         return true;
       }
-      if (command.includes("스페셜오프") || command.includes("스페셜꺼") || command.includes("specialoff")) {
-        setSpecialForcesEnabled(false, "SPECIAL OFF");
+      if (command.includes(specialOff) || command.includes(specialTurnOff) || command.includes("specialoff")) {
+        setSpecialForcesEnabled(false, "SPECIAL OFF", true);
         return true;
       }
       return false;
     }
 
-    function setSpecialForcesEnabled(enabled, statusText = "") {
+    function setSpecialForcesEnabled(enabled, statusText = "", fromVoice = false) {
       specialForcesEnabled = enabled;
       idleRaidTimer = 0;
       idleRaidWarned = false;
@@ -387,6 +392,55 @@
         voiceCommandStatus = statusText;
         voiceCommandStatusTimer = 2.4;
       }
+      if (fromVoice) acknowledgeVoiceCommand();
+    }
+
+    function acknowledgeVoiceCommand() {
+      voiceCommandFlash = 0.42;
+      playRogerThatSound();
+    }
+
+    function playRogerThatSound() {
+      ensureAudio();
+      if (!audioCtx) return;
+      if (audioCtx.state === "suspended" && audioCtx.resume) {
+        audioCtx.resume().then(playRogerThatSound).catch(() => {});
+        return;
+      }
+      try {
+        const now = audioCtx.currentTime;
+        const master = audioCtx.createGain();
+        master.gain.setValueAtTime(0.0001, now);
+        master.gain.exponentialRampToValueAtTime(0.24, now + 0.035);
+        master.gain.exponentialRampToValueAtTime(0.0001, now + 0.66);
+        master.connect(audioCtx.destination);
+
+        const syllables = [
+          { t: 0.00, f: 118, e: 82, d: 0.18 },
+          { t: 0.19, f: 132, e: 74, d: 0.16 },
+          { t: 0.37, f: 104, e: 58, d: 0.22 }
+        ];
+        for (const s of syllables) {
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          const filter = audioCtx.createBiquadFilter();
+          osc.type = "sawtooth";
+          filter.type = "lowpass";
+          filter.frequency.setValueAtTime(620, now + s.t);
+          filter.Q.setValueAtTime(4.2, now + s.t);
+          osc.frequency.setValueAtTime(s.f, now + s.t);
+          osc.frequency.linearRampToValueAtTime(s.e, now + s.t + s.d);
+          gain.gain.setValueAtTime(0.0001, now + s.t);
+          gain.gain.exponentialRampToValueAtTime(0.42, now + s.t + 0.025);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + s.t + s.d);
+          osc.connect(filter);
+          filter.connect(gain);
+          gain.connect(master);
+          osc.start(now + s.t);
+          osc.stop(now + s.t + s.d + 0.02);
+        }
+        playNoiseLayer({ duration: 0.08, volume: 0.055, type: "bandpass", frequency: 210, q: 0.8, start: 0.02 });
+      } catch (error) {}
     }
 
     function detectMobileDevice() {
@@ -1616,6 +1670,7 @@
 
     function update(dt) {
       voiceCommandStatusTimer = Math.max(0, voiceCommandStatusTimer - dt);
+      voiceCommandFlash = Math.max(0, voiceCommandFlash - dt);
       if (state === "intro") {
         if (!introStarted) return;
         introTimer += dt;
@@ -2562,6 +2617,17 @@
         drawGame();
         if (state === "dead") drawDeath();
       }
+      drawVoiceCommandFlash();
+      ctx.restore();
+    }
+
+    function drawVoiceCommandFlash() {
+      if (voiceCommandFlash <= 0) return;
+      const t = voiceCommandFlash / 0.42;
+      const alpha = Math.sin(t * Math.PI) * 0.32 + t * 0.08;
+      ctx.save();
+      ctx.fillStyle = "rgba(45, 120, 255, " + Math.max(0, Math.min(0.42, alpha)) + ")";
+      ctx.fillRect(0, 0, width, height);
       ctx.restore();
     }
 
