@@ -11,14 +11,27 @@
 			margin: 0;
 			border: 0 none;
 			padding: 0;
+			width: 100vw;
+			height: 100vh;
+			height: 100dvh;
+			overflow: hidden;
 			text-align: center;
 			background-color: black;
+			display: flex;
+			justify-content: center;
+			align-items: center;
 		}
 
 		#canvas {
 			display: block;
 			margin: 0;
 			color: white;
+			width: 100vw;
+			height: 100vh;
+			height: 100dvh;
+			max-width: 100vw;
+			max-height: 100vh;
+			max-height: 100dvh;
 		}
 
 		#canvas:focus {
@@ -117,7 +130,7 @@
 
 </head>
 <body>
-	<canvas id='canvas'>
+	<canvas id='canvas' tabindex='0'>
 		HTML5 canvas appears to be unsupported in the current browser.<br />
 		Please try updating or use a different browser.
 	</canvas>
@@ -139,8 +152,15 @@
 	<script type='text/javascript' src='index.js'></script>
 	<script type='text/javascript'>//<![CDATA[
 
-		const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":103376,"index.wasm":13790961},"focusCanvas":true,"gdnativeLibs":[]};
+		const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":105648,"index.wasm":13790961},"focusCanvas":true,"gdnativeLibs":[]};
 		var engine = new Engine(GODOT_CONFIG);
+		var canvas = document.getElementById('canvas');
+		function focusGameCanvas() {
+			canvas.focus({ preventScroll: true });
+		}
+		window.addEventListener('load', focusGameCanvas);
+		window.addEventListener('pointerdown', focusGameCanvas);
+		window.addEventListener('keydown', focusGameCanvas);
 
 		(function() {
 			const INDETERMINATE_STATUS_STEP_MS = 100;
@@ -245,4 +265,3 @@
 	//]]></script>
 </body>
 </html>
-
