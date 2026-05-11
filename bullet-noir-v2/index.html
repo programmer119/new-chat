@@ -130,7 +130,9 @@
       dodge: false,
       weaponTouchId: null,
       weaponTouchX: 0,
-      weaponTouchY: 0
+      weaponTouchY: 0,
+      weaponDragX: 0,
+      weaponReady: false
     };
     let audioReady = false;
     let audioCtx = null;
@@ -201,6 +203,8 @@
     let bombCount = 1;
     let flameAmmo = 0;
     let iceAmmo = 0;
+    let dashCharges = 3;
+    let dashRecharge = 0;
     const lightCanvas = document.createElement("canvas");
     const lightCtx = lightCanvas.getContext("2d");
 
@@ -948,6 +952,8 @@
       player.isMoving = false;
       player.invuln = 0;
       player.dodge = 0;
+      dashCharges = 3;
+      dashRecharge = 0;
       bullets.length = 0;
       bombs.length = 0;
       tracers.length = 0;
@@ -1013,6 +1019,9 @@
       mouse.right = false;
       mobileControls.shoot = false;
       mobileControls.dodge = false;
+      mobileControls.weaponTouchId = null;
+      mobileControls.weaponDragX = 0;
+      mobileControls.weaponReady = false;
       mobileControls.moveX = 0;
       mobileControls.moveY = 0;
       mobileControls.aimKnobX = 0;
@@ -1904,6 +1913,10 @@
       spawnTimer -= dt;
       player.invuln -= dt;
       player.dodge -= dt;
+      if (dashCharges <= 0 && dashRecharge > 0) {
+        dashRecharge = Math.max(0, dashRecharge - dt);
+        if (dashRecharge <= 0) dashCharges = 3;
+      }
       updateRaidWarningEffects(dt);
       if (spawnTimer <= 0) {
         spawnTimer = Math.max(0.35, 1.25 - wave * 0.045);
@@ -1929,12 +1942,14 @@
       let speed = sprint && player.stamina > 0 ? 285 : 190;
       if (sprint && (mx || my)) player.stamina = Math.max(0, player.stamina - dt * 35);
       else player.stamina = Math.min(100, player.stamina + dt * 22);
-      if ((keys.has("Space") || (isMobile && mobileControls.dodge)) && player.stamina > 25 && player.dodge <= 0 && (mx || my)) {
+      const wantsDash = keys.has("Space") || (isMobile && mobileControls.dodge);
+      if (wantsDash && dashCharges > 0 && player.dodge <= 0 && (mx || my)) {
         player.dodge = 0.22;
         player.invuln = 0.28;
-        player.stamina -= 25;
-        mobileControls.dodge = false;
+        dashCharges = Math.max(0, dashCharges - 1);
+        if (dashCharges <= 0) dashRecharge = 5;
       }
+      if (isMobile && mobileControls.dodge) mobileControls.dodge = false;
       if (player.dodge > 0) speed = 520;
 
       const beforePlayerX = player.x;
@@ -2206,10 +2221,20 @@
 
     function maybeDropLoot(enemy) {
       if (!itemDropMode) return;
-      maybeDropPotion(enemy.x, enemy.y);
-      if (Math.random() < 0.22) addPickup(enemy.x, enemy.y, "bomb");
-      if (enemy.kind === "flamer" && Math.random() < 0.36) addPickup(enemy.x + 16, enemy.y, "flamer");
-      if (enemy.kind === "melee" && Math.random() < 0.34) addPickup(enemy.x - 16, enemy.y, "ice");
+      const candidates = [{ type: "heal", weight: 0.28, x: enemy.x, y: enemy.y }];
+      candidates.push({ type: "bomb", weight: 0.22, x: enemy.x, y: enemy.y });
+      if (enemy.kind === "flamer") candidates.push({ type: "flamer", weight: 0.36, x: enemy.x + 16, y: enemy.y });
+      if (enemy.kind === "melee") candidates.push({ type: "ice", weight: 0.34, x: enemy.x - 16, y: enemy.y });
+      const total = candidates.reduce((sum, item) => sum + item.weight, 0);
+      let roll = Math.random();
+      if (roll > total) return;
+      for (const item of candidates) {
+        roll -= item.weight;
+        if (roll <= 0) {
+          addPickup(item.x, item.y, item.type);
+          return;
+        }
+      }
     }
 
     function addPickup(x, y, type) {
@@ -2245,15 +2270,12 @@
     function applyPickup(type, x, y) {
       if (type === "bomb") {
         bombCount++;
-        selectedWeapon = "bomb";
         voiceCommandStatus = "BOMB +" + bombCount;
       } else if (type === "flamer") {
         flameAmmo += 120;
-        selectedWeapon = "flamer";
         voiceCommandStatus = "FLAMER +" + flameAmmo;
       } else if (type === "ice") {
         iceAmmo += 6;
-        selectedWeapon = "ice";
         voiceCommandStatus = "ICE STORM +" + iceAmmo;
       } else {
         player.hp = Math.min(100, player.hp + 20);
@@ -4512,7 +4534,7 @@
       ctx.font = "800 12px Arial";
       ctx.fillText("AIM", rects.attack.x, rects.attack.y - rects.attack.r - 12);
       drawMobileWeaponSwitch(rects.weapon);
-      drawMobileDashButton(rects.dodge, player.stamina > 25);
+      drawMobileDashButton(rects.dodge, dashCharges > 0);
       if (rifleReload > 0) drawReloadRing(rects.attack);
       ctx.restore();
     }
@@ -4523,18 +4545,25 @@
       const next = nextWeapon();
       const t = performance.now() * 0.006;
       const slide = canSwitch ? (Math.sin(t) * 0.5 + 0.5) : 0;
+      const dragProgress = clamp(-(mobileControls.weaponDragX || 0) / 48, 0, 1);
+      const armed = canSwitch && mobileControls.weaponReady;
       const nextW = 86;
       const nextH = 34;
       const nextX = Math.max(10, rect.x - nextW - 42);
       const nextY = rect.y + rect.h * 0.5 - nextH * 0.5;
       ctx.globalAlpha = canSwitch ? 0.94 : 0.48;
-      ctx.fillStyle = "rgba(10, 13, 17, 0.7)";
-      ctx.strokeStyle = "rgba(220, 232, 240, 0.36)";
-      ctx.lineWidth = 1.4;
+      ctx.fillStyle = armed ? "rgba(236, 245, 255, 0.9)" : "rgba(10, 13, 17, 0.7)";
+      ctx.strokeStyle = armed ? "rgba(255, 236, 150, 0.96)" : "rgba(220, 232, 240, 0.36)";
+      ctx.lineWidth = armed ? 2.6 : 1.4;
       roundRect(nextX, nextY, nextW, nextH, 9);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = "#dfe7ef";
+      if (dragProgress > 0 && !armed) {
+        ctx.fillStyle = "rgba(255, 236, 150, " + (0.2 + dragProgress * 0.32) + ")";
+        roundRect(nextX + 3, nextY + 3, (nextW - 6) * dragProgress, nextH - 6, 7);
+        ctx.fill();
+      }
+      ctx.fillStyle = armed ? "#11161b" : "#dfe7ef";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.font = "900 10px Arial";
@@ -4546,7 +4575,7 @@
       const arrowStart = rect.x - 8;
       const arrowEnd = nextX + nextW + 8;
       const animX = arrowStart - slide * 24;
-      ctx.strokeStyle = canSwitch ? "rgba(238, 246, 255, 0.86)" : "rgba(180,190,198,0.5)";
+      ctx.strokeStyle = armed ? "rgba(255, 236, 150, 0.98)" : (canSwitch ? "rgba(238, 246, 255, 0.86)" : "rgba(180,190,198,0.5)");
       ctx.lineWidth = 2;
       ctx.lineCap = "round";
       ctx.beginPath();
@@ -4559,7 +4588,7 @@
       ctx.stroke();
       for (let i = 0; i < 2; i++) {
         const x = animX - i * 14;
-        ctx.globalAlpha = canSwitch ? 0.45 + slide * 0.45 - i * 0.15 : 0.28;
+        ctx.globalAlpha = armed ? 1 - i * 0.2 : (canSwitch ? 0.45 + slide * 0.45 - i * 0.15 : 0.28);
         ctx.beginPath();
         ctx.moveTo(x, arrowY - 8);
         ctx.lineTo(x - 10, arrowY);
@@ -4589,6 +4618,14 @@
       roundRect(rect.x, rect.y, rect.w, rect.h, 13);
       ctx.fill();
       ctx.stroke();
+      if (dashCharges <= 0 && dashRecharge > 0) {
+        const p = 1 - dashRecharge / 5;
+        ctx.strokeStyle = "rgba(255, 231, 152, 0.95)";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(rect.x + rect.w / 2, rect.y + rect.h / 2, Math.max(rect.w, rect.h) * 0.56, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p);
+        ctx.stroke();
+      }
       ctx.fillStyle = "#10151b";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
@@ -4681,7 +4718,7 @@
       ctx.font = "900 9px Arial";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("DASH", cx, rect.y + rect.h - 10);
+      ctx.fillText(dashCharges > 0 ? ("DASH " + dashCharges) : Math.ceil(dashRecharge), cx, rect.y + rect.h - 10);
       ctx.restore();
     }
 
@@ -4766,6 +4803,8 @@
           mobileControls.weaponTouchId = touch.identifier;
           mobileControls.weaponTouchX = p.x;
           mobileControls.weaponTouchY = p.y;
+          mobileControls.weaponDragX = 0;
+          mobileControls.weaponReady = false;
         } else if (action === "dodge") {
           mobileControls.dodge = true;
         } else if (p.x < width * 0.46 && mobileControls.moveId === null) {
@@ -4801,9 +4840,15 @@
           mobileControls.aimId = null;
         }
         if (touch.identifier === mobileControls.weaponTouchId) {
+          const p = touchPoint(touch);
+          mobileControls.weaponDragX = p.x - mobileControls.weaponTouchX;
+          mobileControls.weaponReady = availableWeapons().length > 1 && mobileControls.weaponDragX <= -46;
+          if (mobileControls.weaponReady) cycleWeapon();
           mobileControls.weaponTouchId = null;
           mobileControls.weaponTouchX = 0;
           mobileControls.weaponTouchY = 0;
+          mobileControls.weaponDragX = 0;
+          mobileControls.weaponReady = false;
         }
       }
       if (mobileControls.aimId === null) {
@@ -4823,10 +4868,8 @@
         } else if (touch.identifier === mobileControls.aimId) {
           updateMobileAttackStick(p.x, p.y, false);
         } else if (touch.identifier === mobileControls.weaponTouchId) {
-          if (mobileControls.weaponTouchX - p.x > 34) {
-            cycleWeapon();
-            mobileControls.weaponTouchX = p.x;
-          }
+          mobileControls.weaponDragX = p.x - mobileControls.weaponTouchX;
+          mobileControls.weaponReady = availableWeapons().length > 1 && mobileControls.weaponDragX <= -46;
         }
       }
     }
@@ -5357,7 +5400,7 @@
       const savedIntroStarted = introStarted;
       const savedIntroSoundStarted = introSoundStarted;
       const savedCamera = { x: camera.x, y: camera.y, zoom: camera.zoom };
-      const savedInventory = { selectedWeapon, rifleAmmo, rifleReload, bombCount, flameAmmo, iceAmmo, itemDropMode };
+      const savedInventory = { selectedWeapon, rifleAmmo, rifleReload, bombCount, flameAmmo, iceAmmo, itemDropMode, dashCharges, dashRecharge };
       try {
         walls.length = 0;
         doors.length = 0;
@@ -5575,19 +5618,54 @@
         const bombConsumesInventory = bombCount === 0 && selectedWeapon === "rifle" && bombs.length === 1;
         flameAmmo = 0;
         applyPickup("flamer", player.x, player.y);
-        const flamerPickupAddsAmmo = selectedWeapon === "flamer" && flameAmmo === 120;
+        const flamerPickupAddsAmmo = selectedWeapon === "rifle" && flameAmmo === 120;
         iceAmmo = 0;
         applyPickup("ice", player.x, player.y);
-        const icePickupAddsCharges = selectedWeapon === "ice" && iceAmmo === 6;
+        const icePickupAddsCharges = selectedWeapon === "rifle" && iceAmmo === 6;
+        pickups.length = 0;
+        const savedRandom = Math.random;
+        Math.random = () => 0.01;
+        maybeDropLoot({ x: player.x, y: player.y, kind: "flamer" });
+        Math.random = savedRandom;
+        const enemyDropsAtMostOneItem = pickups.length <= 1;
         walls.length = 0;
         doors.length = 0;
         props.length = 0;
         enemies.length = 0;
         enemies.push({ x: player.x + 120, y: player.y, r: 24, hp: 100, maxHp: 100, fast: false, kind: "melee", freeze: 0 });
         player.angle = 0;
+        selectedWeapon = "ice";
         shootCooldown = 0;
         fireIceStorm();
         const iceStormFreezesEnemy = enemies[0].freeze > 4.5 && iceStorms.length === 1;
+        selectedWeapon = "rifle";
+        bombCount = 1;
+        flameAmmo = 120;
+        const weaponBeforeDrag = selectedWeapon;
+        mobileControls.weaponTouchX = 300;
+        mobileControls.weaponDragX = -30;
+        mobileControls.weaponReady = availableWeapons().length > 1 && mobileControls.weaponDragX <= -46;
+        const shortWeaponDragDoesNotSwitch = !mobileControls.weaponReady && selectedWeapon === weaponBeforeDrag;
+        mobileControls.weaponDragX = -54;
+        mobileControls.weaponReady = availableWeapons().length > 1 && mobileControls.weaponDragX <= -46;
+        if (mobileControls.weaponReady) cycleWeapon();
+        const longWeaponDragSwitchesOnRelease = selectedWeapon !== weaponBeforeDrag;
+        state = "play";
+        keys.add("Space");
+        keys.add("KeyD");
+        dashCharges = 3;
+        dashRecharge = 0;
+        player.dodge = 0;
+        update(0.02);
+        player.dodge = 0;
+        update(0.24);
+        player.dodge = 0;
+        update(0.24);
+        keys.delete("Space");
+        keys.delete("KeyD");
+        const dashThreeUsesStartsCooldown = dashCharges === 0 && dashRecharge > 0;
+        update(5.1);
+        const dashCooldownRefillsCharges = dashCharges === 3 && dashRecharge === 0;
         specialForcesEnabled = false;
         const mobileSpecialToggleWorks = handleSpecialForcesToggleClick(
           specialForcesToggleRect().x + 18,
@@ -5710,7 +5788,12 @@
           bombConsumesInventory,
           flamerPickupAddsAmmo,
           icePickupAddsCharges,
+          enemyDropsAtMostOneItem,
           iceStormFreezesEnemy,
+          shortWeaponDragDoesNotSwitch,
+          longWeaponDragSwitchesOnRelease,
+          dashThreeUsesStartsCooldown,
+          dashCooldownRefillsCharges,
           mobileSpecialToggleWorks,
           mobileAimCursorActsLikeMouse,
           mobileAimUnaffectedByMoveStick,
@@ -5761,6 +5844,13 @@
         flameAmmo = savedInventory.flameAmmo;
         iceAmmo = savedInventory.iceAmmo;
         itemDropMode = savedInventory.itemDropMode;
+        dashCharges = savedInventory.dashCharges;
+        dashRecharge = savedInventory.dashRecharge;
+        mobileControls.weaponTouchId = null;
+        mobileControls.weaponDragX = 0;
+        mobileControls.weaponReady = false;
+        keys.delete("Space");
+        keys.delete("KeyD");
       }
     }
 
