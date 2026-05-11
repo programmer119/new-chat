@@ -335,21 +335,20 @@
           for (let i = event.resultIndex; i < event.results.length; i++) {
             const result = event.results[i];
             if (!result || !result[0]) continue;
-            handleVoiceCommand(result[0].transcript);
+            const transcript = result[0].transcript || "";
+            if (!handleVoiceCommand(transcript) && transcript.trim() && state === "play") {
+              voiceCommandStatus = "HEARD " + transcript.trim().slice(0, 14);
+              voiceCommandStatusTimer = 1.5;
+            }
           }
         };
         voiceRecognition.onerror = () => {
           voiceCommandStatus = "VOICE COMMAND PAUSED";
           voiceCommandStatusTimer = 1.6;
+          voiceRecognitionStarted = false;
         };
         voiceRecognition.onend = () => {
-          if (voiceRecognitionStarted && voiceRecognition) {
-            setTimeout(() => {
-              try {
-                voiceRecognition.start();
-              } catch (error) {}
-            }, 700);
-          }
+          voiceRecognitionStarted = false;
         };
         voiceRecognition.start();
         voiceCommandStatus = "VOICE COMMAND READY";
@@ -357,24 +356,40 @@
       } catch (error) {
         voiceCommandStatus = "VOICE COMMAND BLOCKED";
         voiceCommandStatusTimer = 2.2;
+        voiceRecognitionStarted = false;
       }
     }
 
     function handleVoiceCommand(rawText) {
+      if (state !== "play") {
+        if (rawText && String(rawText).trim()) {
+          voiceCommandStatus = "VOICE WAITING";
+          voiceCommandStatusTimer = 1.2;
+        }
+        return false;
+      }
       const command = String(rawText || "")
         .toLowerCase()
         .replace(/\s+/g, "")
-        .replace(/[.,!?]/g, "");
+        .replace(/[.,!?~]/g, "");
       if (!command) return false;
       const specialOn = "\uc2a4\ud398\uc15c\uc628";
+      const specialOnAlt = "\uc2a4\ud328\uc15c\uc628";
+      const specialOne = "\uc2a4\ud398\uc15c\uc6d0";
+      const specialUn = "\uc2a4\ud398\uc15c\uc5b8";
       const specialTurnOn = "\uc2a4\ud398\uc15c\ucf1c";
       const specialOff = "\uc2a4\ud398\uc15c\uc624\ud504";
+      const specialOffAlt = "\uc2a4\ud328\uc15c\uc624\ud504";
+      const specialOf = "\uc2a4\ud398\uc15c\uc624\ube0c";
       const specialTurnOff = "\uc2a4\ud398\uc15c\uaebc";
-      if (command.includes(specialOn) || command.includes(specialTurnOn) || command.includes("specialon")) {
+      const saysSpecial = command.includes("\uc2a4\ud398\uc15c") || command.includes("\uc2a4\ud328\uc15c") || command.includes("special");
+      const saysOn = command.includes("\uc628") || command.includes("\uc6d0") || command.includes("\uc5b8") || command.includes("\ucf1c") || command.includes("on") || command.includes("one");
+      const saysOff = command.includes("\uc624\ud504") || command.includes("\uc624\ube0c") || command.includes("\uaebc") || command.includes("off");
+      if (command.includes(specialOn) || command.includes(specialOnAlt) || command.includes(specialOne) || command.includes(specialUn) || command.includes(specialTurnOn) || command.includes("specialon") || (saysSpecial && saysOn && !saysOff)) {
         setSpecialForcesEnabled(true, "SPECIAL ON", true);
         return true;
       }
-      if (command.includes(specialOff) || command.includes(specialTurnOff) || command.includes("specialoff")) {
+      if (command.includes(specialOff) || command.includes(specialOffAlt) || command.includes(specialOf) || command.includes(specialTurnOff) || command.includes("specialoff") || (saysSpecial && saysOff)) {
         setSpecialForcesEnabled(false, "SPECIAL OFF", true);
         return true;
       }
@@ -945,6 +960,7 @@
       ensureAudio();
       resetWorld();
       state = "play";
+      startVoiceCommands();
     }
 
     function goMainMenu() {
@@ -4240,6 +4256,7 @@
       if (!isMobile) return;
       event.preventDefault();
       ensureAudio();
+      startVoiceCommands();
       updateTouchPositions(event);
       for (const touch of event.changedTouches) {
         const p = touchPoint(touch);
