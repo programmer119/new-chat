@@ -175,7 +175,7 @@
 </head>
 <body>
 	<div id="container">
-		<canvas id="canvas" width="1024" height="600" onclick="canvas.ownerDocument.defaultView.focus();" oncontextmenu="event.preventDefault();">
+		<canvas id="canvas" width="1024" height="600" tabindex="0" onclick="canvas.ownerDocument.defaultView.focus(); canvas.focus();" oncontextmenu="event.preventDefault();">
 			HTML5 canvas appears to be unsupported in the current browser.<br />Please try updating or use a different browser.
 		</canvas>
 		<div id="status-container">
@@ -195,6 +195,61 @@
 
 	<script type="text/javascript">//<![CDATA[
 		(function() {
+			var canvasElement = document.getElementById("canvas");
+			function focusGameCanvas() {
+				try { window.focus(); } catch (e) {}
+				try { canvasElement.focus({ preventScroll: true }); } catch (e) { try { canvasElement.focus(); } catch (_) {} }
+			}
+			var replayingCanvasClick = false;
+			function replayCanvasClick(clientX, clientY) {
+				if (replayingCanvasClick) return;
+				replayingCanvasClick = true;
+				var base = { bubbles: true, cancelable: true, view: window, clientX: clientX, clientY: clientY, screenX: clientX, screenY: clientY, button: 0, buttons: 1 };
+				canvasElement.dispatchEvent(new MouseEvent("mousemove", base));
+				canvasElement.dispatchEvent(new MouseEvent("mouseover", base));
+				canvasElement.dispatchEvent(new MouseEvent("mouseenter", base));
+				canvasElement.dispatchEvent(new MouseEvent("mousedown", base));
+				canvasElement.dispatchEvent(new MouseEvent("mouseup", Object.assign({}, base, { buttons: 0 })));
+				canvasElement.dispatchEvent(new MouseEvent("click", Object.assign({}, base, { buttons: 0 })));
+				setTimeout(function() { replayingCanvasClick = false; }, 80);
+			}
+			function isMenuClickZone(x, y) {
+				return (x >= 40 && x <= 530 && y >= 220 && y <= 470) || (x >= 330 && x <= 650 && y >= 385 && y <= 485);
+			}
+			["pointerdown", "mousedown", "mouseup", "mousemove", "click", "touchstart", "touchend", "keydown"].forEach(function(type) {
+				document.addEventListener(type, focusGameCanvas, true);
+			});
+			["mousedown", "mouseup", "click"].forEach(function(type) {
+				canvasElement.addEventListener(type, function(event) {
+					if (replayingCanvasClick || !isMenuClickZone(event.clientX, event.clientY)) return;
+					event.preventDefault();
+					event.stopImmediatePropagation();
+					if (type === "mouseup") {
+						var x = event.clientX;
+						var y = event.clientY;
+						setTimeout(function() { replayCanvasClick(x, y); }, 20);
+					}
+				}, true);
+			});
+			canvasElement.addEventListener("mouseup", function(event) {
+				if (replayingCanvasClick) return;
+				if (isMenuClickZone(event.clientX, event.clientY)) return;
+				var x = event.clientX;
+				var y = event.clientY;
+				setTimeout(function() { replayCanvasClick(x, y); }, 40);
+			}, true);
+			canvasElement.addEventListener("touchend", function(event) {
+				if (replayingCanvasClick || !event.changedTouches || !event.changedTouches.length) return;
+				var touch = event.changedTouches[0];
+				var x = touch.clientX;
+				var y = touch.clientY;
+				if (!isMenuClickZone(x, y)) return;
+				event.preventDefault();
+				event.stopImmediatePropagation();
+				setTimeout(function() { replayCanvasClick(x, y); }, 40);
+			}, true);
+			window.addEventListener("load", function() { setTimeout(focusGameCanvas, 250); });
+
 			var getGamepads = navigator.getGamepads || navigator.webkitGetGamepads || navigator.mozGetGamepads;
 			var safeGetGamepads = function() {
 				var pads = getGamepads ? getGamepads.call(navigator) : [];
