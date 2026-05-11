@@ -1731,10 +1731,11 @@
         x: sx,
         y: sy,
         angle: player.angle,
-        life: 0.36,
-        maxLife: 0.36,
+        life: 0.46,
+        maxLife: 0.46,
         length: reach,
-        maxLength: maxRange
+        maxLength: maxRange,
+        seed: Math.random() * 1000
       });
       for (const enemy of enemies) {
         const ex = enemy.x - sx;
@@ -2147,7 +2148,7 @@
         player.angle = Math.atan2(aimTarget.y - player.y, aimTarget.x - player.x);
       }
       updateAimRay(aimTarget);
-      if (mouse.down || (isMobile && mobileControls.shoot)) fire();
+      if (mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice")) fire();
       if (mouse.right || keys.has("KeyQ")) throwBomb(aimTarget);
 
       for (let i = bullets.length - 1; i >= 0; i--) {
@@ -4311,42 +4312,79 @@
       ctx.globalCompositeOperation = "lighter";
       for (const flame of flameBursts) {
         const alpha = Math.max(0, flame.life / flame.maxLife);
-        const len = flame.length * (0.82 + 0.18 * alpha);
-        const spread = flame.spread * (0.82 + 0.2 * Math.sin(alpha * Math.PI));
+        const age = 1 - alpha;
+        const flicker = Math.sin(performance.now() * 0.05 + flame.x * 0.03) * 0.08;
+        const len = flame.length * (0.72 + 0.28 * alpha + flicker);
+        const spread = flame.spread * (1.05 + 0.42 * Math.sin(age * Math.PI));
         const a = flame.angle;
         const tipX = flame.x + Math.cos(a) * len;
         const tipY = flame.y + Math.sin(a) * len;
-        const leftX = flame.x + Math.cos(a - spread) * len * 0.72;
-        const leftY = flame.y + Math.sin(a - spread) * len * 0.72;
-        const rightX = flame.x + Math.cos(a + spread) * len * 0.72;
-        const rightY = flame.y + Math.sin(a + spread) * len * 0.72;
+        const leftX = flame.x + Math.cos(a - spread) * len * 0.78;
+        const leftY = flame.y + Math.sin(a - spread) * len * 0.78;
+        const rightX = flame.x + Math.cos(a + spread) * len * 0.78;
+        const rightY = flame.y + Math.sin(a + spread) * len * 0.78;
         const gradient = ctx.createLinearGradient(flame.x, flame.y, tipX, tipY);
-        gradient.addColorStop(0, "rgba(255, 248, 198, " + (0.72 * alpha) + ")");
-        gradient.addColorStop(0.34, "rgba(255, 124, 42, " + (0.54 * alpha) + ")");
-        gradient.addColorStop(0.72, "rgba(154, 38, 14, " + (0.24 * alpha) + ")");
+        gradient.addColorStop(0, "rgba(255, 255, 232, " + (0.92 * alpha) + ")");
+        gradient.addColorStop(0.18, "rgba(255, 214, 92, " + (0.84 * alpha) + ")");
+        gradient.addColorStop(0.46, "rgba(255, 92, 24, " + (0.72 * alpha) + ")");
+        gradient.addColorStop(0.78, "rgba(162, 32, 8, " + (0.36 * alpha) + ")");
         gradient.addColorStop(1, "rgba(60, 12, 5, 0)");
         ctx.fillStyle = gradient;
         ctx.beginPath();
         ctx.moveTo(flame.x, flame.y);
-        ctx.lineTo(leftX, leftY);
+        ctx.quadraticCurveTo(
+          flame.x + Math.cos(a - spread * 0.8) * len * 0.38,
+          flame.y + Math.sin(a - spread * 0.8) * len * 0.38,
+          leftX,
+          leftY
+        );
         ctx.quadraticCurveTo(tipX, tipY, rightX, rightY);
+        ctx.quadraticCurveTo(
+          flame.x + Math.cos(a + spread * 0.8) * len * 0.38,
+          flame.y + Math.sin(a + spread * 0.8) * len * 0.38,
+          flame.x,
+          flame.y
+        );
         ctx.closePath();
         ctx.fill();
 
-        for (let i = 0; i < 4; i++) {
-          const offset = (i - 1.5) * spread * 0.26;
-          const tongueLen = len * (0.38 + i * 0.11);
-          ctx.strokeStyle = i % 2 ? "rgba(255, 211, 120, " + (0.34 * alpha) + ")" : "rgba(255, 76, 24, " + (0.28 * alpha) + ")";
-          ctx.lineWidth = 6 - i;
+        ctx.strokeStyle = "rgba(70, 15, 7, " + (0.16 * alpha) + ")";
+        ctx.lineWidth = 18;
+        ctx.beginPath();
+        ctx.moveTo(flame.x - Math.cos(a) * 6, flame.y - Math.sin(a) * 6);
+        ctx.lineTo(flame.x + Math.cos(a) * len * 0.82, flame.y + Math.sin(a) * len * 0.82);
+        ctx.stroke();
+
+        for (let i = 0; i < 7; i++) {
+          const wave = Math.sin(performance.now() * 0.025 + i * 1.7 + flame.x * 0.01);
+          const offset = (i - 3) * spread * 0.17 + wave * spread * 0.08;
+          const tongueLen = len * (0.32 + i * 0.085);
+          ctx.strokeStyle = i % 2 ? "rgba(255, 236, 142, " + (0.52 * alpha) + ")" : "rgba(255, 64, 18, " + (0.42 * alpha) + ")";
+          ctx.lineWidth = Math.max(2, 9 - i * 0.75);
           ctx.beginPath();
           ctx.moveTo(flame.x, flame.y);
           ctx.quadraticCurveTo(
-            flame.x + Math.cos(a + offset) * tongueLen * 0.55,
-            flame.y + Math.sin(a + offset) * tongueLen * 0.55,
-            flame.x + Math.cos(a + offset * 1.8) * tongueLen,
-            flame.y + Math.sin(a + offset * 1.8) * tongueLen
+            flame.x + Math.cos(a + offset) * tongueLen * 0.5 + Math.cos(a + Math.PI / 2) * wave * 8,
+            flame.y + Math.sin(a + offset) * tongueLen * 0.5 + Math.sin(a + Math.PI / 2) * wave * 8,
+            flame.x + Math.cos(a + offset * 1.7) * tongueLen,
+            flame.y + Math.sin(a + offset * 1.7) * tongueLen
           );
           ctx.stroke();
+        }
+        for (let i = 0; i < 14; i++) {
+          const t = ((i * 0.071 + age * 1.8) % 1);
+          const side = Math.sin(i * 12.989 + flame.x) * spread * len * 0.32 * t;
+          const px = flame.x + Math.cos(a) * len * t + Math.cos(a + Math.PI / 2) * side;
+          const py = flame.y + Math.sin(a) * len * t + Math.sin(a + Math.PI / 2) * side;
+          const r = (5 + 13 * t) * alpha;
+          const ember = ctx.createRadialGradient(px, py, 0, px, py, Math.max(1, r));
+          ember.addColorStop(0, "rgba(255, 245, 178, " + (0.72 * alpha * (1 - t * 0.35)) + ")");
+          ember.addColorStop(0.45, "rgba(255, 92, 18, " + (0.42 * alpha) + ")");
+          ember.addColorStop(1, "rgba(80, 12, 5, 0)");
+          ctx.fillStyle = ember;
+          ctx.beginPath();
+          ctx.arc(px, py, Math.max(1, r), 0, Math.PI * 2);
+          ctx.fill();
         }
       }
       ctx.restore();
@@ -4357,6 +4395,7 @@
       ctx.globalCompositeOperation = "lighter";
       for (const storm of iceStorms) {
         const alpha = Math.max(0, storm.life / storm.maxLife);
+        const age = 1 - alpha;
         const shrink = storm.length / (storm.maxLength || storm.length || 1);
         const len = storm.length * (0.78 + 0.22 * alpha);
         const a = storm.angle;
@@ -4364,24 +4403,53 @@
         ctx.translate(storm.x, storm.y);
         ctx.rotate(a);
         const gradient = ctx.createLinearGradient(0, 0, len, 0);
-        gradient.addColorStop(0, "rgba(220, 250, 255, " + (0.68 * alpha) + ")");
-        gradient.addColorStop(0.5, "rgba(120, 218, 255, " + (0.38 * alpha) + ")");
+        gradient.addColorStop(0, "rgba(245, 255, 255, " + (0.84 * alpha) + ")");
+        gradient.addColorStop(0.18, "rgba(218, 246, 255, " + (0.62 * alpha) + ")");
+        gradient.addColorStop(0.55, "rgba(138, 220, 255, " + (0.36 * alpha) + ")");
         gradient.addColorStop(1, "rgba(80, 180, 255, 0)");
         ctx.fillStyle = gradient;
         ctx.beginPath();
         ctx.moveTo(0, 0);
-        ctx.quadraticCurveTo(len * 0.45, -20 * shrink, len, -50 * shrink);
-        ctx.lineTo(len, 50 * shrink);
-        ctx.quadraticCurveTo(len * 0.45, 20 * shrink, 0, 0);
+        ctx.quadraticCurveTo(len * 0.34, -34 * shrink, len * 0.92, -66 * shrink);
+        ctx.quadraticCurveTo(len * 0.84, -18 * shrink, len, 0);
+        ctx.quadraticCurveTo(len * 0.84, 18 * shrink, len * 0.92, 66 * shrink);
+        ctx.quadraticCurveTo(len * 0.34, 34 * shrink, 0, 0);
         ctx.fill();
-        ctx.strokeStyle = "rgba(232, 252, 255, " + (0.48 * alpha) + ")";
-        ctx.lineWidth = 2;
-        for (let i = 0; i < 5; i++) {
-          const t = (i + 1) / 6;
+        ctx.strokeStyle = "rgba(242, 255, 255, " + (0.5 * alpha) + ")";
+        ctx.lineWidth = 2.3;
+        for (let i = 0; i < 7; i++) {
+          const t = (i + 1) / 8;
           const x = len * t;
-          const r = (12 + 38 * t) * shrink * alpha;
+          const wave = Math.sin(performance.now() * 0.018 + i * 1.8 + (storm.seed || 0));
+          const r = (14 + 46 * t) * shrink * alpha;
           ctx.beginPath();
-          ctx.arc(x, Math.sin(performance.now() * 0.01 + i) * 4, r, 0, Math.PI * 1.5);
+          ctx.arc(x, wave * 12 * t, r, -Math.PI * 0.18, Math.PI * 1.28);
+          ctx.stroke();
+        }
+        for (let i = 0; i < 34; i++) {
+          const seed = Math.sin((storm.seed || 0) + i * 19.17) * 10000;
+          const t = (Math.abs(seed) + age * (0.75 + (i % 5) * 0.08)) % 1;
+          const spread = (16 + t * 82) * shrink;
+          const side = Math.sin(seed * 2.31 + age * 8) * spread;
+          const x = len * t;
+          const y = side;
+          const size = (1.4 + (i % 4) * 0.8) * alpha;
+          ctx.fillStyle = i % 3 === 0 ? "rgba(255,255,255," + (0.88 * alpha) + ")" : "rgba(165,232,255," + (0.68 * alpha) + ")";
+          ctx.beginPath();
+          ctx.moveTo(x, y - size * 2.4);
+          ctx.lineTo(x + size * 1.6, y);
+          ctx.lineTo(x, y + size * 2.4);
+          ctx.lineTo(x - size * 1.6, y);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.strokeStyle = "rgba(250,255,255," + (0.42 * alpha) + ")";
+        ctx.lineWidth = 1.2;
+        for (let i = 0; i < 5; i++) {
+          const y = (i - 2) * 18 * shrink;
+          ctx.beginPath();
+          ctx.moveTo(len * 0.06, y * 0.35);
+          ctx.bezierCurveTo(len * 0.3, y - 20 * alpha, len * 0.62, y + 24 * alpha, len * 0.96, y * 1.8);
           ctx.stroke();
         }
         ctx.restore();
@@ -5232,6 +5300,7 @@
         }
         if (touch.identifier === mobileControls.aimId) {
           if (selectedWeapon === "bomb") throwBomb(mobileAimWorldTarget());
+          if (selectedWeapon === "ice") fireIceStorm();
           if (selectedWeapon === "barricade") placeBarricadeFromAim();
           mobileControls.aimId = null;
         }
