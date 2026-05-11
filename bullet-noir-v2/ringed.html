@@ -1604,13 +1604,65 @@
       if (prop.hp <= 0) destroyProp(prop);
     }
 
+    function findTouchedBarricade(entity, dx = 0, dy = 0) {
+      let best = null;
+      let bestD = Infinity;
+      const r = collisionRadius(entity) + 13;
+      const px = entity.x + dx * 8;
+      const py = entity.y + dy * 8;
+      for (const prop of props) {
+        if (prop.type !== "barricade") continue;
+        const rect = propCollisionRect(prop);
+        if (!circleRect(px, py, r, rect)) continue;
+        const cx = clamp(px, rect.x, rect.x + rect.w);
+        const cy = clamp(py, rect.y, rect.y + rect.h);
+        const d = dist2(px, py, cx, cy);
+        if (d < bestD) {
+          bestD = d;
+          best = { prop, x: cx, y: cy };
+        }
+      }
+      return best;
+    }
+
+    function damageBarricadesInCone(sx, sy, dx, dy, reach, baseWidth, growth, amount) {
+      let damaged = 0;
+      for (const prop of props) {
+        if (prop.type !== "barricade") continue;
+        const rect = propCollisionRect(prop);
+        const corners = [
+          { x: rect.x, y: rect.y },
+          { x: rect.x + rect.w, y: rect.y },
+          { x: rect.x, y: rect.y + rect.h },
+          { x: rect.x + rect.w, y: rect.y + rect.h },
+          { x: prop.x, y: prop.y }
+        ];
+        for (const point of corners) {
+          const px = point.x - sx;
+          const py = point.y - sy;
+          const forward = px * dx + py * dy;
+          if (forward <= 0 || forward > reach + 8) continue;
+          const side = Math.abs(px * dy - py * dx);
+          if (side > baseWidth + forward * growth) continue;
+          if (!hasLineOfSight(sx, sy, point.x, point.y, Math.hypot(px, py), { ignoreBarricades: true })) continue;
+          damageBarricade(prop, amount, point.x, point.y);
+          damaged++;
+          break;
+        }
+      }
+      return damaged;
+    }
+
     function destroyProp(prop) {
       const index = props.indexOf(prop);
       if (index < 0) return;
       if (prop.type === "crate") {
         const pieces = prop.s >= 0.9 ? 4 : 2;
-        barricadeCount += pieces;
-        voiceCommandStatus = "BARR +" + pieces;
+        for (let i = 0; i < pieces; i++) {
+          const a = (i / pieces) * Math.PI * 2 + 0.25;
+          addPickup(prop.x + Math.cos(a) * (18 + i * 4), prop.y + Math.sin(a) * (18 + i * 4), "barricade");
+        }
+        voiceCommandStatus = "BARR ITEM x" + pieces;
         voiceCommandStatusTimer = 1.3;
       }
       burst(prop.x, prop.y, prop.type === "barricade" ? "#dce8ee" : "#c9aa78", 18);
@@ -1654,6 +1706,7 @@
           burst(enemy.x, enemy.y, "#e46a32", 3);
         }
       }
+      damageBarricadesInCone(sx, sy, dx, dy, reach, 32, 0.16, 1);
       shake = Math.max(shake, 2.5);
     }
 
@@ -1695,6 +1748,7 @@
           burst(enemy.x, enemy.y, "#bfefff", 12);
         }
       }
+      damageBarricadesInCone(sx, sy, dx, dy, reach, 18, 0.42, 2);
       shake = Math.max(shake, 5);
     }
 
@@ -1763,6 +1817,13 @@
             gameOverTimer = 0;
           }
         }
+        for (const prop of props.slice()) {
+          if (prop.type !== "barricade") continue;
+          const d = Math.hypot(prop.x - bomb.x, prop.y - bomb.y);
+          if (d <= radius && hasExplosionLineOfSight(bomb.x, bomb.y, prop.x, prop.y, d)) {
+            damageBarricade(prop, 4, prop.x, prop.y);
+          }
+        }
         shake = Math.max(shake, 12);
         return;
       }
@@ -1771,6 +1832,13 @@
         if (d <= radius && hasExplosionLineOfSight(bomb.x, bomb.y, enemy.x, enemy.y, d)) {
           enemy.hp -= 180 * (1 - d / radius) + 90;
           burst(enemy.x, enemy.y, "#d8e8ff", 6);
+        }
+      }
+      for (const prop of props.slice()) {
+        if (prop.type !== "barricade") continue;
+        const d = Math.hypot(prop.x - bomb.x, prop.y - bomb.y);
+        if (d <= radius && hasExplosionLineOfSight(bomb.x, bomb.y, prop.x, prop.y, d)) {
+          damageBarricade(prop, 4, prop.x, prop.y);
         }
       }
       shake = Math.max(shake, 12);
@@ -2125,6 +2193,7 @@
           e.bite = Math.max(e.bite, 0.25);
           continue;
         }
+        e.barricadeHit = Math.max(0, (e.barricadeHit || 0) - dt);
         if (e.raidLeader && !e.raidBombThrown) {
           throwEnemyBomb(e, { x: player.x, y: player.y });
           e.raidBombThrown = true;
@@ -2180,6 +2249,16 @@
             bullets.splice(j, 1);
             burst(b.x, b.y, "#c8e7a0", 8);
             break;
+          }
+        }
+
+        if (e.kind === "melee" && e.barricadeHit <= 0) {
+          const barricadeHit = findTouchedBarricade(e, dx / d, dy / d);
+          if (barricadeHit) {
+            e.barricadeHit = e.fast ? 0.28 : 0.36;
+            e.bite = Math.max(e.bite, 0.14);
+            damageBarricade(barricadeHit.prop, e.fast ? 1 : 2, barricadeHit.x, barricadeHit.y);
+            continue;
           }
         }
 
@@ -2319,6 +2398,7 @@
         life: 0.08,
         maxLife: 0.08
       });
+      damageBarricadesInCone(sx, sy, dx, dy, enemy.fast ? 188 : 210, enemy.fast ? 34 : 40, 0.18, enemy.fast ? 1 : 2);
       if (player.invuln <= 0) {
         player.hp -= enemy.fast ? 8 : 12;
         player.invuln = 0.14;
@@ -2363,7 +2443,7 @@
       pickups.push({
         x,
         y,
-        r: 17,
+        r: type === "barricade" ? 22 : 17,
         type,
         life: 18,
         pulse: Math.random() * Math.PI * 2
@@ -2379,6 +2459,7 @@
       if (type === "bomb") return "B";
       if (type === "flamer") return "F";
       if (type === "ice") return "I";
+      if (type === "barricade") return "BAR";
       return "+";
     }
 
@@ -2386,6 +2467,7 @@
       if (type === "bomb") return "#f4d89a";
       if (type === "flamer") return "#ff8a3d";
       if (type === "ice") return "#bfefff";
+      if (type === "barricade") return "#dce8ee";
       return "#78eb80";
     }
 
@@ -2399,6 +2481,9 @@
       } else if (type === "ice") {
         iceAmmo += 6;
         voiceCommandStatus = "ICE STORM +" + iceAmmo;
+      } else if (type === "barricade") {
+        barricadeCount++;
+        voiceCommandStatus = "BARR +" + barricadeCount;
       } else {
         player.hp = Math.min(100, player.hp + 20);
         voiceCommandStatus = "HP +20";
@@ -3825,15 +3910,38 @@
         ctx.fillStyle = p.type === "heal" ? "rgba(24, 45, 32, 0.96)" : "rgba(28, 32, 38, 0.96)";
         ctx.strokeStyle = "rgba(210, 255, 218, 0.86)";
         ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.roundRect ? ctx.roundRect(-11, -14, 22, 28, 5) : ctx.rect(-11, -14, 22, 28);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = color;
-        ctx.font = "900 16px Arial";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(pickupLabel(p.type), 0, 1);
+        if (p.type === "barricade") {
+          ctx.beginPath();
+          ctx.roundRect ? ctx.roundRect(-24, -10, 48, 20, 4) : ctx.rect(-24, -10, 48, 20);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(230, 244, 250, 0.95)";
+          ctx.stroke();
+          ctx.strokeStyle = "rgba(160, 212, 230, 0.85)";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(-16, -5);
+          ctx.lineTo(-16, 5);
+          ctx.moveTo(0, -6);
+          ctx.lineTo(0, 6);
+          ctx.moveTo(16, -5);
+          ctx.lineTo(16, 5);
+          ctx.stroke();
+          ctx.fillStyle = color;
+          ctx.font = "900 10px Arial";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("BARR", 0, 17);
+        } else {
+          ctx.beginPath();
+          ctx.roundRect ? ctx.roundRect(-11, -14, 22, 28, 5) : ctx.rect(-11, -14, 22, 28);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = color;
+          ctx.font = "900 16px Arial";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(pickupLabel(p.type), 0, 1);
+        }
         ctx.restore();
       }
     }
