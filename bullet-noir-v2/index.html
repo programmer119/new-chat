@@ -104,6 +104,10 @@
     let idleRaidWarned = false;
     let raidWarningActive = false;
     let raidWarningPulse = 0;
+    let voiceRecognition = null;
+    let voiceRecognitionStarted = false;
+    let voiceCommandStatus = "";
+    let voiceCommandStatusTimer = 0;
     let raidAlarmTimer = 0;
     const isMobile = detectMobileDevice();
     const mobileControls = {
@@ -207,6 +211,7 @@
     window.addEventListener("resize", resize);
     window.addEventListener("keydown", (event) => {
       keys.add(event.code);
+      startVoiceCommands();
       if (["Space", "KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"].includes(event.code)) {
         event.preventDefault();
       }
@@ -236,6 +241,7 @@
       mouse.x = event.clientX - rect.left;
       mouse.y = event.clientY - rect.top;
       ensureAudio();
+      startVoiceCommands();
       if (state === "intro") {
         startIntroSequence();
         return;
@@ -307,6 +313,80 @@
       startNoirBgm();
       loadAudioBuffers();
       unlockAudio();
+    }
+
+    function startVoiceCommands() {
+      if (voiceRecognitionStarted) return;
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        voiceCommandStatus = "VOICE COMMANDS UNSUPPORTED";
+        voiceCommandStatusTimer = 2.2;
+        voiceRecognitionStarted = true;
+        return;
+      }
+      voiceRecognitionStarted = true;
+      try {
+        voiceRecognition = new SpeechRecognition();
+        voiceRecognition.lang = "ko-KR";
+        voiceRecognition.continuous = true;
+        voiceRecognition.interimResults = true;
+        voiceRecognition.onresult = (event) => {
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const result = event.results[i];
+            if (!result || !result[0]) continue;
+            handleVoiceCommand(result[0].transcript);
+          }
+        };
+        voiceRecognition.onerror = () => {
+          voiceCommandStatus = "VOICE COMMAND PAUSED";
+          voiceCommandStatusTimer = 1.6;
+        };
+        voiceRecognition.onend = () => {
+          if (voiceRecognitionStarted && voiceRecognition) {
+            setTimeout(() => {
+              try {
+                voiceRecognition.start();
+              } catch (error) {}
+            }, 700);
+          }
+        };
+        voiceRecognition.start();
+        voiceCommandStatus = "VOICE COMMAND READY";
+        voiceCommandStatusTimer = 2.2;
+      } catch (error) {
+        voiceCommandStatus = "VOICE COMMAND BLOCKED";
+        voiceCommandStatusTimer = 2.2;
+      }
+    }
+
+    function handleVoiceCommand(rawText) {
+      const command = String(rawText || "")
+        .toLowerCase()
+        .replace(/\s+/g, "")
+        .replace(/[.,!?]/g, "");
+      if (!command) return false;
+      if (command.includes("스페셜온") || command.includes("스페셜켜") || command.includes("specialon")) {
+        setSpecialForcesEnabled(true, "SPECIAL ON");
+        return true;
+      }
+      if (command.includes("스페셜오프") || command.includes("스페셜꺼") || command.includes("specialoff")) {
+        setSpecialForcesEnabled(false, "SPECIAL OFF");
+        return true;
+      }
+      return false;
+    }
+
+    function setSpecialForcesEnabled(enabled, statusText = "") {
+      specialForcesEnabled = enabled;
+      idleRaidTimer = 0;
+      idleRaidWarned = false;
+      raidWarningActive = false;
+      lastIdleX = player.x;
+      lastIdleY = player.y;
+      if (statusText) {
+        voiceCommandStatus = statusText;
+        voiceCommandStatusTimer = 2.4;
+      }
     }
 
     function detectMobileDevice() {
@@ -1535,6 +1615,7 @@
     }
 
     function update(dt) {
+      voiceCommandStatusTimer = Math.max(0, voiceCommandStatusTimer - dt);
       if (state === "intro") {
         if (!introStarted) return;
         introTimer += dt;
@@ -3933,11 +4014,7 @@
     function handleSpecialForcesToggleClick(x, y) {
       const rect = specialForcesToggleRect();
       if (x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h) {
-        specialForcesEnabled = !specialForcesEnabled;
-        idleRaidTimer = 0;
-        idleRaidWarned = false;
-        lastIdleX = player.x;
-        lastIdleY = player.y;
+        setSpecialForcesEnabled(!specialForcesEnabled, specialForcesEnabled ? "SPECIAL OFF" : "SPECIAL ON");
         return true;
       }
       return false;
@@ -3968,6 +4045,11 @@
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
       ctx.fillText("SPECIAL FORCES", rect.x + 32, rect.y + rect.h / 2 + 1);
+      if (voiceCommandStatusTimer > 0) {
+        ctx.fillStyle = specialForcesEnabled ? "#f2d28c" : "#b8c0ca";
+        ctx.font = "700 10px Arial";
+        ctx.fillText(voiceCommandStatus, rect.x + rect.w + 10, rect.y + rect.h / 2 + 1);
+      }
       ctx.restore();
     }
 
