@@ -6144,9 +6144,10 @@
         } else {
           const oldX = Number.isFinite(current.x) ? current.x : tx;
           const oldY = Number.isFinite(current.y) ? current.y : ty;
+          const snap = Math.hypot(oldX - tx, oldY - ty) > 260 || (current.kind && incoming.kind && current.kind !== incoming.kind);
           Object.assign(current, incoming);
-          current.x = oldX;
-          current.y = oldY;
+          current.x = snap ? tx : oldX;
+          current.y = snap ? ty : oldY;
           current.netX = tx;
           current.netY = ty;
           enemies[i] = current;
