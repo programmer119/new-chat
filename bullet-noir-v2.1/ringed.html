@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.10";
-    const BUILD_TIMESTAMP = "2026-05-12 21:59:00 KST";
+    const BUILD_VERSION = "2.1.11";
+    const BUILD_TIMESTAMP = "2026-05-12 22:09:30 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -555,13 +555,15 @@
         if (params.get("mobile") === "1") return true;
         if (params.get("mobile") === "0") return false;
       } catch (error) {}
-      const touchPoints = navigator.maxTouchPoints || navigator.msMaxTouchPoints || 0;
-      if (touchPoints <= 0) return false;
       const ua = navigator.userAgent || "";
       const mobileUa = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(ua);
-      const compactTouch = Math.min(window.innerWidth || 9999, window.innerHeight || 9999) <= 820;
+      if (mobileUa) return true;
+      const touchPoints = navigator.maxTouchPoints || navigator.msMaxTouchPoints || 0;
+      const hasTouch = touchPoints > 0 || "ontouchstart" in window;
+      if (!hasTouch) return false;
+      const compactTouch = Math.min(window.innerWidth || 9999, window.innerHeight || 9999) <= 920;
       const coarse = !window.matchMedia || window.matchMedia("(hover: none) and (pointer: coarse)").matches;
-      return mobileUa && compactTouch && coarse;
+      return compactTouch && coarse;
     }
 
     function makeAudio(src, volume) {
@@ -5160,7 +5162,7 @@
       actionRow.style.display = coop.role ? "grid" : "none";
       scanButton.style.display = coop.role === "guest" && !hasLocal ? "" : "none";
       useButton.style.display = coop.role === "host" ? "" : "none";
-      qrButton.style.display = coop.role === "host" && hasLocal && coop.codeView === "local" ? "" : "none";
+      qrButton.style.display = hasLocal && coop.codeView === "local" ? "" : "none";
       copyRow.style.display = hasLocal && coop.codeView === "local" ? "flex" : "none";
       if (!coop.role) {
         codeLabel.textContent = "HOST OR GUEST";
@@ -5179,6 +5181,7 @@
           help.textContent = "Paste the code from the guest phone, then press CONNECT.";
         }
       } else {
+        qrButton.textContent = "GUEST QR";
         scanButton.textContent = (coop.scannedOfferReady || hasRemote) && !hasLocal ? "CONNECT" : "SCAN";
         if (failed) {
           codeLabel.textContent = "CONNECTION FAILED";
@@ -5853,6 +5856,9 @@
         await coopSetLocalDescriptionSignal(pc.localDescription);
         coop.scannedOfferReady = false;
         coopShowLocalCode();
+        const qrBox = document.getElementById("coop-qr-box");
+        if (qrBox) qrBox.style.display = "block";
+        updateCoopQr();
         setCoopStatus("GUEST CODE READY");
       } catch (err) {
         setCoopStatus("ERROR");
