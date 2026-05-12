@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.23";
-    const BUILD_TIMESTAMP = "2026-05-13 02:47:07 KST";
+    const BUILD_VERSION = "2.1.24";
+    const BUILD_TIMESTAMP = "2026-05-13 03:09:21 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -1684,9 +1684,21 @@
       const dy = Math.sin(player.angle);
       const sx = player.x + dx * 34;
       const sy = player.y + dy * 34;
-      const hit = raycastShot(sx, sy, dx, dy, Math.min(980, Math.max(70, Math.hypot(aimTarget.x - sx, aimTarget.y - sy))));
+      const hit = raycastShot(sx, sy, dx, dy, 980);
       tracers.push({ x1: sx, y1: sy, x2: hit.x, y2: hit.y, life: 0.09, maxLife: 0.09 });
+      if (hit.solid) burst(hit.x, hit.y, "#f4efe8", 5);
       flashes.push({ x: sx + dx * 18, y: sy + dy * 18, angle: player.angle, life: 0.075, maxLife: 0.075 });
+      for (let i = 0; i < 4; i++) {
+        particles.push({
+          x: sx,
+          y: sy,
+          vx: Math.cos(player.angle + (Math.random() - 0.5) * 0.7) * (80 + Math.random() * 180),
+          vy: Math.sin(player.angle + (Math.random() - 0.5) * 0.7) * (80 + Math.random() * 180),
+          life: 0.14 + Math.random() * 0.12,
+          color: "#ffd776",
+          r: 2 + Math.random() * 3
+        });
+      }
       coopRememberShot(sx, sy, hit.x, hit.y);
       coopSendNow();
     }
@@ -1728,6 +1740,21 @@
         });
       } else if (action.type === "specialForces") {
         setSpecialForcesEnabled(!!action.enabled, action.enabled ? "SPECIAL ON" : "SPECIAL OFF");
+      } else if (action.type === "pickup") {
+        const ax = Number(action.x) || Number(data.x) || 0;
+        const ay = Number(action.y) || Number(data.y) || 0;
+        let bestIndex = -1;
+        let bestD = Infinity;
+        for (let i = 0; i < pickups.length; i++) {
+          const p = pickups[i];
+          if (action.pickupType && p.type !== action.pickupType) continue;
+          const d = dist2(p.x, p.y, ax, ay);
+          if (d < bestD) {
+            bestD = d;
+            bestIndex = i;
+          }
+        }
+        if (bestIndex >= 0 && bestD < 70 * 70) pickups.splice(bestIndex, 1);
       }
     }
 
@@ -6498,8 +6525,7 @@
         specialForcesEnabled = !!data.specialForcesEnabled;
         raidWarningActive = !!data.raidWarningActive;
         raidWarningPulse = Number.isFinite(data.raidWarningPulse) ? data.raidWarningPulse : raidWarningPulse;
-        const incomingShake = Number(data.shake) || 0;
-        if (performance.now() - (coop.connectedAt || 0) > 650) shake = Math.max(shake, Math.min(8, incomingShake));
+        shake = 0;
         if (Array.isArray(data.doors)) {
           while (doors.length > data.doors.length) doors.pop();
           for (let i = 0; i < data.doors.length; i++) {
@@ -6585,6 +6611,7 @@
     }
 
     function coopUpdateGuestEffects(dt) {
+      shake = 0;
       for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
         p.x += p.vx * dt;
@@ -6624,9 +6651,27 @@
       for (let i = iceStorms.length - 1; i >= 0; i--) iceStorms[i].life = Math.max(0, iceStorms[i].life - dt);
     }
 
+    function coopGuestCollectPickups() {
+      for (let i = pickups.length - 1; i >= 0; i--) {
+        const p = pickups[i];
+        if (dist2(player.x, player.y, p.x, p.y) < (player.r + p.r) * (player.r + p.r)) {
+          applyPickup(p.type, p.x, p.y);
+          const action = coopRememberAction("pickup", { x: p.x, y: p.y });
+          action.pickupType = p.type;
+          pickups.splice(i, 1);
+          coopSendNow();
+        }
+      }
+    }
+
     function updateCoopGuestPlayer(dt) {
       shootCooldown -= dt;
       bombCooldown -= dt;
+      player.dodge -= dt;
+      if (dashCharges <= 0 && dashRecharge > 0) {
+        dashRecharge = Math.max(0, dashRecharge - dt);
+        if (dashRecharge <= 0) dashCharges = 3;
+      }
       if (rifleReload > 0) {
         rifleReload = Math.max(0, rifleReload - dt);
         if (rifleReload <= 0) rifleAmmo = 60;
@@ -6645,9 +6690,19 @@
       const mag = Math.hypot(mx, my) || 1;
       mx /= mag;
       my /= mag;
+      const wantsDash = keys.has("Space") || (isMobile && mobileControls.dodge);
+      if (wantsDash && dashCharges > 0 && player.dodge <= 0 && (mx || my)) {
+        player.dodge = 0.22;
+        player.invuln = 0.28;
+        addDashBurst(player.x, player.y, Math.atan2(my, mx));
+        dashCharges = Math.max(0, dashCharges - 1);
+        if (dashCharges <= 0) dashRecharge = 5;
+      }
+      if (isMobile && mobileControls.dodge) mobileControls.dodge = false;
+      const speed = player.dodge > 0 ? 520 : 190;
       const beforeX = player.x;
       const beforeY = player.y;
-      moveCircle(player, mx * 190 * dt, my * 190 * dt);
+      moveCircle(player, mx * speed * dt, my * speed * dt);
       player.moveX = mx;
       player.moveY = my;
       player.isMoving = Math.hypot(player.x - beforeX, player.y - beforeY) > 0.35;
@@ -6657,7 +6712,7 @@
       updateAimRay(isMobile ? mobileAimWorldTarget() : aimTarget);
       if (mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice")) coopGuestFireVisual(isMobile ? mobileAimWorldTarget() : aimTarget);
       if (mouse.right || keys.has("KeyQ")) throwBomb(isMobile ? mobileAimWorldTarget() : aimTarget);
-      if (isMobile && mobileControls.dodge) mobileControls.dodge = false;
+      coopGuestCollectPickups();
       coopUpdateGuestEffects(dt);
     }
 
