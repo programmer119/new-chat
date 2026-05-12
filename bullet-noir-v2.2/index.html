@@ -5003,7 +5003,7 @@
         "position:fixed",
         "left:12px",
         "top:204px",
-        "z-index:20",
+        "z-index:9999",
         "width:min(420px,calc(100vw - 24px))",
         "padding:12px",
         "box-sizing:border-box",
@@ -5012,7 +5012,8 @@
         "border-radius:8px",
         "color:#eef6ff",
         "font:12px Arial,sans-serif",
-        "box-shadow:0 12px 30px rgba(0,0,0,.46)"
+        "box-shadow:0 12px 30px rgba(0,0,0,.46)",
+        "pointer-events:auto"
       ].join(";");
       coopPanel.innerHTML =
         '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">' +
@@ -5025,10 +5026,17 @@
         '<button id="coop-disconnect" type="button">DISCONNECT</button></div>' +
         '<label style="display:block;margin:6px 0 3px">내 신호 복사</label>' +
         '<textarea id="coop-local" readonly style="width:100%;height:94px;box-sizing:border-box;background:#101722;color:#dcecff;border:1px solid #33485e"></textarea>' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><button id="coop-copy" type="button">COPY</button><button id="coop-qr-toggle" type="button">QR</button><span id="coop-qr-note" style="color:#b9c5d0">긴 신호는 QR이 안 나올 수 있음</span></div>' +
+        '<div id="coop-qr-box" style="display:none;margin-top:8px;padding:8px;background:#fff;width:max-content;max-width:100%"><img id="coop-qr-img" alt="coop qr" style="display:block;width:180px;height:180px"></div>' +
         '<label style="display:block;margin:8px 0 3px">상대 신호 붙여넣기</label>' +
         '<textarea id="coop-remote" style="width:100%;height:94px;box-sizing:border-box;background:#101722;color:#dcecff;border:1px solid #33485e"></textarea>' +
         '<div style="margin-top:8px;color:#b9c5d0;line-height:1.35">호스트: HOST OFFER -> 복사 전달. 게스트: 붙여넣고 JOIN OFFER -> answer 전달. 호스트: answer 붙여넣고 HOST ACCEPT ANSWER.</div>';
       document.body.appendChild(coopPanel);
+      for (const eventName of ["mousedown", "mouseup", "mousemove", "click", "touchstart", "touchmove", "touchend", "pointerdown", "pointerup"]) {
+        coopPanel.addEventListener(eventName, (event) => {
+          event.stopPropagation();
+        }, { passive: false });
+      }
       const buttonStyle = "background:#162234;color:#eef6ff;border:1px solid #405a72;border-radius:5px;padding:7px 6px;font-weight:700";
       coopPanel.querySelectorAll("button").forEach((button) => button.style.cssText = button.id === "coop-close" ? buttonStyle + ";padding:3px 8px" : buttonStyle);
       document.getElementById("coop-close").onclick = () => coopPanel.style.display = "none";
@@ -5036,11 +5044,14 @@
       document.getElementById("coop-join").onclick = () => coopStartJoiner(document.getElementById("coop-remote").value);
       document.getElementById("coop-accept").onclick = () => coopAcceptAnswer(document.getElementById("coop-remote").value);
       document.getElementById("coop-disconnect").onclick = () => coopDisconnect();
+      document.getElementById("coop-copy").onclick = () => coopCopyLocalSignal();
+      document.getElementById("coop-qr-toggle").onclick = () => coopToggleQr();
     }
 
     function coopSetLocalSignal(text) {
       ensureCoopPanel();
       document.getElementById("coop-local").value = text;
+      updateCoopQr();
     }
 
     function coopGetLocalSignal() {
@@ -5056,6 +5067,41 @@
     function coopApplyRemoteSignal(text) {
       ensureCoopPanel();
       document.getElementById("coop-remote").value = text;
+    }
+
+    async function coopCopyLocalSignal() {
+      try {
+        await navigator.clipboard.writeText(coopGetLocalSignal());
+        setCoopStatus("COPIED");
+      } catch {
+        setCoopStatus("COPY FAIL");
+      }
+    }
+
+    function coopToggleQr() {
+      ensureCoopPanel();
+      const box = document.getElementById("coop-qr-box");
+      box.style.display = box.style.display === "none" ? "block" : "none";
+      updateCoopQr();
+    }
+
+    function updateCoopQr() {
+      const img = document.getElementById("coop-qr-img");
+      const note = document.getElementById("coop-qr-note");
+      if (!img || !note) return;
+      const signal = coopGetLocalSignal();
+      if (!signal) {
+        img.removeAttribute("src");
+        note.textContent = "먼저 offer/answer 생성";
+        return;
+      }
+      if (signal.length > 2950) {
+        img.removeAttribute("src");
+        note.textContent = "신호가 너무 길어 QR 대신 COPY 사용";
+        return;
+      }
+      img.src = "https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=" + encodeURIComponent(signal);
+      note.textContent = "상대 폰으로 스캔 후 붙여넣기";
     }
 
     function coopCreatePeer() {
@@ -5702,14 +5748,12 @@
       mobileControls.aimKnobY = ay;
       const dirX = Math.abs(dx) + Math.abs(dy) < 8 ? Math.cos(player.angle || 0) : dx / d;
       const dirY = Math.abs(dx) + Math.abs(dy) < 8 ? Math.sin(player.angle || 0) : dy / d;
-      if (!mobileControls.aimScreenX && !mobileControls.aimScreenY) {
-        initMobileAimCursorFromDirection(dirX, dirY);
-      } else if (hadTouch) {
-        const sensitivity = 2.15;
-        mobileControls.aimScreenX = clamp(mobileControls.aimScreenX + dragX * sensitivity, 18, width - 18);
-        mobileControls.aimScreenY = clamp(mobileControls.aimScreenY + dragY * sensitivity, 18, height - 18);
-        syncMobileAimWorld();
-      }
+      const distance = Math.min(width, height) * 0.36;
+      const px = screenX(player.x);
+      const py = screenY(player.y);
+      mobileControls.aimScreenX = clamp(px + dirX * distance, 18, width - 18);
+      mobileControls.aimScreenY = clamp(py + dirY * distance, 18, height - 18);
+      syncMobileAimWorld();
       mobileControls.aimTouchX = x;
       mobileControls.aimTouchY = y;
     }
@@ -6493,10 +6537,12 @@
         const mobileAimUnaffectedByMoveStick =
           Math.abs(mobileControls.aimScreenX - lockedAimX) < 0.01 &&
           Math.abs(mobileControls.aimScreenY - lockedAimY) < 0.01;
-        updateMobileAttackStick(1060, 585, false);
-        const mobileAimDragUsesTouchDelta =
-          Math.abs(mobileControls.aimScreenX - (lockedAimX + 20 * 2.15)) < 0.01 &&
-          Math.abs(mobileControls.aimScreenY - (lockedAimY + 15 * 2.15)) < 0.01;
+        const attackStickForInstantAim = mobileButtonRects().attack;
+        updateMobileAttackStick(attackStickForInstantAim.x, attackStickForInstantAim.y - attackStickForInstantAim.r, true);
+        const topAimY = mobileControls.aimScreenY;
+        updateMobileAttackStick(attackStickForInstantAim.x, attackStickForInstantAim.y + attackStickForInstantAim.r, false);
+        const mobileAimJoystickRetargetsInstantly =
+          mobileControls.aimScreenY > topAimY + Math.min(width, height) * 0.55;
         const draggedAimX = mobileControls.aimScreenX;
         const draggedAimY = mobileControls.aimScreenY;
         updateMobileStick(180, height - 150);
@@ -6592,7 +6638,7 @@
           mobileSpecialToggleWorks,
           mobileAimCursorActsLikeMouse,
           mobileAimUnaffectedByMoveStick,
-          mobileAimDragUsesTouchDelta,
+          mobileAimJoystickRetargetsInstantly,
           mobileMoveStickDoesNotMoveCursor,
           mobileAimRetargetsAfterCameraMove,
           synthSfxFallbackAvailable,
