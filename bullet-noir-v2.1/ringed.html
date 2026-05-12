@@ -5341,11 +5341,9 @@
       try {
         const signal = await coopUnpackSignal(text);
         if (signal.type === "offer") {
-          setCoopStatus("QR OFFER FOUND");
-          await coopStartJoiner(text);
+          setCoopStatus("QR OFFER READY - PRESS 2");
         } else if (signal.type === "answer") {
-          setCoopStatus("QR ANSWER FOUND");
-          await coopAcceptAnswer(text);
+          setCoopStatus("QR ANSWER READY - PRESS 2");
         } else {
           setCoopStatus("QR PASTED");
         }
