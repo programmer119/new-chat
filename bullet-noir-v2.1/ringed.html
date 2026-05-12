@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.4";
-    const BUILD_TIMESTAMP = "2026-05-12 20:55:53 KST";
+    const BUILD_VERSION = "2.1.5";
+    const BUILD_TIMESTAMP = "2026-05-12 21:03:23 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -5065,7 +5065,7 @@
     }
 
     function coopPrimaryScanAction() {
-      if (coop.role === "guest" && coop.scannedOfferReady && !coopGetLocalSignal()) {
+      if (coop.role === "guest" && (coop.scannedOfferReady || !!coopGetRemoteSignal()) && !coopGetLocalSignal()) {
         coopUseRemoteCode(coopGetRemoteSignal());
         return;
       }
@@ -5129,13 +5129,13 @@
           help.textContent = "Paste the code from the guest phone, then press CONNECT.";
         }
       } else {
-        scanButton.textContent = coop.scannedOfferReady && !hasLocal ? "CONNECT" : "SCAN";
+        scanButton.textContent = (coop.scannedOfferReady || hasRemote) && !hasLocal ? "CONNECT" : "SCAN";
         if (coop.codeView === "local") {
           codeLabel.textContent = "GUEST CODE - ENTER ON HOST";
           help.textContent = "Send or type this code into the host PC.";
         } else {
-          codeLabel.textContent = coop.scannedOfferReady ? "HOST CODE READY - PRESS CONNECT" : "SCAN HOST QR";
-          help.textContent = coop.scannedOfferReady ? "Press CONNECT to create your guest code." : "Scan the host QR.";
+          codeLabel.textContent = (coop.scannedOfferReady || hasRemote) ? "HOST CODE READY - PRESS CONNECT" : "SCAN HOST QR";
+          help.textContent = (coop.scannedOfferReady || hasRemote) ? "Press CONNECT to create your guest code." : "Scan the host QR.";
         }
       }
       net.textContent = "PC " + coop.pcState + " / ICE " + coop.iceState + " / GATHER " + coop.iceGathering + " / CAND " + coop.localCandidates + ":" + coop.remoteCandidates;
@@ -5202,7 +5202,15 @@
       document.getElementById("coop-qr-toggle").onclick = () => coopToggleQr();
       document.getElementById("coop-copy-qr").onclick = () => coopCopyQrImage();
       document.getElementById("coop-code").oninput = (event) => {
-        if (coop.codeView !== "local") document.getElementById("coop-remote").value = event.target.value;
+        if (coop.codeView !== "local") {
+          document.getElementById("coop-remote").value = event.target.value;
+          if (coop.role === "guest" && !coopGetLocalSignal()) {
+            coop.scannedOfferReady = !!event.target.value.trim();
+            setCoopStatus(coop.scannedOfferReady ? "HOST CODE READY" : "SCAN HOST QR");
+          } else {
+            coopRefreshPanel();
+          }
+        }
       };
       coopRefreshPanel();
     }
