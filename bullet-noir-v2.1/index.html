@@ -54,8 +54,10 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.15";
-    const BUILD_TIMESTAMP = "2026-05-13 00:44:15 KST";
+    const BUILD_VERSION = "2.1.16";
+    const BUILD_TIMESTAMP = "2026-05-13 01:03:20 KST";
+    const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
+    let meteredIceServersPromise = null;
 
     const assetList = {
       player: "gfx/player.png",
@@ -5766,22 +5768,46 @@
       }
     }
 
-    function coopCreatePeer() {
+    function fallbackIceServers() {
+      return [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:global.stun.twilio.com:3478" },
+        { urls: "stun:openrelay.metered.ca:80" },
+        { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+        { urls: "turn:openrelay.metered.ca:80?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
+        { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+        { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
+        { urls: "turns:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
+      ];
+    }
+
+    async function coopLoadIceServers() {
+      if (!meteredIceServersPromise) {
+        meteredIceServersPromise = fetch(METERED_TURN_API_URL, { cache: "no-store" })
+          .then((response) => {
+            if (!response.ok) throw new Error("TURN API " + response.status);
+            return response.json();
+          })
+          .then((servers) => {
+            if (!Array.isArray(servers) || !servers.length) throw new Error("TURN API returned no ICE servers");
+            return servers;
+          })
+          .catch((err) => {
+            console.warn("Metered TURN fetch failed, using fallback ICE servers", err);
+            return fallbackIceServers();
+          });
+      }
+      return meteredIceServersPromise;
+    }
+
+    async function coopCreatePeer() {
       if (!window.RTCPeerConnection) throw new Error("WebRTC unsupported");
       coopDisconnect(false);
+      const iceServers = await coopLoadIceServers();
       const pc = new RTCPeerConnection({
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-          { urls: "stun:stun2.l.google.com:19302" },
-          { urls: "stun:global.stun.twilio.com:3478" },
-          { urls: "stun:openrelay.metered.ca:80" },
-          { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
-          { urls: "turn:openrelay.metered.ca:80?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
-          { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
-          { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
-          { urls: "turns:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
-        ],
+        iceServers,
         iceCandidatePoolSize: 8,
         iceTransportPolicy: coop.relayMode ? "relay" : "all",
         bundlePolicy: "max-bundle",
@@ -5918,7 +5944,7 @@
       try {
         ensureCoopPanel();
         setCoopStatus("HOSTING");
-        const pc = coopCreatePeer();
+        const pc = await coopCreatePeer();
         coop.role = "host";
         coop.exchanging = true;
         coopAttachChannel(pc.createDataChannel("sang-sub-coop"));
@@ -5943,7 +5969,7 @@
         setCoopStatus("JOINING");
         const offer = await coopUnpackSignal(offerText || coopGetRemoteSignal());
         coop.relayMode = coop.relayMode || /(^|\+)relay($|\+)/.test(coopCandidateTypes(offer) || "");
-        const pc = coopCreatePeer();
+        const pc = await coopCreatePeer();
         coop.role = "guest";
         coop.exchanging = true;
         coopSetCandidateInfo("remote", offer);
