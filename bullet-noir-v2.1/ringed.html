@@ -5006,9 +5006,12 @@
       coopPanel.style.cssText = [
         "position:fixed",
         "left:12px",
-        "top:204px",
+        "top:8px",
         "z-index:9999",
         "width:min(420px,calc(100vw - 24px))",
+        "max-height:calc(100vh - 16px)",
+        "overflow-y:auto",
+        "-webkit-overflow-scrolling:touch",
         "padding:12px",
         "box-sizing:border-box",
         "background:rgba(8,10,14,.94)",
@@ -5034,7 +5037,7 @@
         '<textarea id="coop-local" readonly style="width:100%;height:94px;box-sizing:border-box;background:#101722;color:#dcecff;border:1px solid #33485e"></textarea>' +
         '<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><button id="coop-copy" type="button">COPY</button><button id="coop-qr-toggle" type="button">QR</button><span id="coop-qr-note" style="color:#b9c5d0">긴 신호는 QR이 안 나올 수 있음</span></div>' +
         '<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><button id="coop-copy-qr" type="button">COPY QR</button><span style="color:#b9c5d0">QR is generated locally.</span></div>' +
-        '<div id="coop-qr-box" style="display:none;margin-top:8px;padding:8px;background:#fff;width:max-content;max-width:100%"><img id="coop-qr-img" alt="coop qr" style="display:block;width:180px;height:180px"></div>' +
+        '<div id="coop-qr-box" style="display:none;margin-top:8px;padding:12px;background:#fff;width:max-content;max-width:100%;box-sizing:border-box"><canvas id="coop-qr-canvas" width="300" height="300" style="display:block;width:min(300px,calc(100vw - 72px));height:min(300px,calc(100vw - 72px));image-rendering:pixelated"></canvas></div>' +
         '<div id="coop-scan-box" style="display:none;margin-top:8px"><video id="coop-scan-video" playsinline muted style="width:100%;max-height:240px;background:#000;border:1px solid #405a72"></video><canvas id="coop-scan-canvas" style="display:none"></canvas></div>' +
         '<label style="display:block;margin:8px 0 3px">상대 신호 붙여넣기</label>' +
         '<textarea id="coop-remote" style="width:100%;height:94px;box-sizing:border-box;background:#101722;color:#dcecff;border:1px solid #33485e"></textarea>' +
@@ -5117,29 +5120,29 @@
     }
 
     function updateCoopQr() {
-      const img = document.getElementById("coop-qr-img");
+      const canvasNode = document.getElementById("coop-qr-canvas");
       const note = document.getElementById("coop-qr-note");
-      if (!img || !note) return;
+      if (!canvasNode || !note) return;
       const signal = coopGetLocalSignal();
       if (!signal) {
-        img.removeAttribute("src");
+        clearCoopQrCanvas(canvasNode);
         note.textContent = "먼저 offer/answer 생성";
         return;
       }
       if (signal.length > 2950) {
-        img.removeAttribute("src");
+        clearCoopQrCanvas(canvasNode);
         note.textContent = "신호가 너무 길어 QR 대신 COPY 사용";
         return;
       }
       try {
-        const qr = qrcode(0, "M");
+        const qr = qrcode(0, "L");
         qr.addData(signal);
         qr.make();
-        img.src = qr.createDataURL(6, 8);
-        note.textContent = "QR READY - COPY QR";
+        drawCoopQrCanvas(canvasNode, qr);
+        note.textContent = "REAL QR READY - SCAN QR";
         return;
       } catch (err) {
-        img.removeAttribute("src");
+        clearCoopQrCanvas(canvasNode);
         note.textContent = "QR FAIL - COPY SIGNAL";
         console.error(err);
         return;
@@ -5147,18 +5150,52 @@
       note.textContent = "상대 폰으로 스캔 후 붙여넣기";
     }
 
+    function clearCoopQrCanvas(canvasNode) {
+      const qrCtx = canvasNode.getContext("2d");
+      qrCtx.fillStyle = "#ffffff";
+      qrCtx.fillRect(0, 0, canvasNode.width, canvasNode.height);
+    }
+
+    function drawCoopQrCanvas(canvasNode, qr) {
+      const moduleCount = qr.getModuleCount();
+      const quiet = 4;
+      const total = moduleCount + quiet * 2;
+      const size = Math.min(300, Math.max(240, Math.floor(window.innerWidth - 72)));
+      const cell = Math.max(1, Math.floor(size / total));
+      const drawn = cell * total;
+      canvasNode.width = drawn;
+      canvasNode.height = drawn;
+      const qrCtx = canvasNode.getContext("2d");
+      qrCtx.imageSmoothingEnabled = false;
+      qrCtx.fillStyle = "#ffffff";
+      qrCtx.fillRect(0, 0, drawn, drawn);
+      qrCtx.fillStyle = "#000000";
+      for (let row = 0; row < moduleCount; row++) {
+        for (let col = 0; col < moduleCount; col++) {
+          if (qr.isDark(row, col)) {
+            qrCtx.fillRect((col + quiet) * cell, (row + quiet) * cell, cell, cell);
+          }
+        }
+      }
+    }
+
+    function coopQrCanvasDataUrl() {
+      const canvasNode = document.getElementById("coop-qr-canvas");
+      return canvasNode ? canvasNode.toDataURL("image/png") : "";
+    }
+
     async function coopCopyQrImage() {
       try {
         updateCoopQr();
-        const img = document.getElementById("coop-qr-img");
-        if (!img || !img.src) throw new Error("QR missing");
-        const blob = await (await fetch(img.src)).blob();
+        const dataUrl = coopQrCanvasDataUrl();
+        if (!dataUrl) throw new Error("QR missing");
+        const blob = await (await fetch(dataUrl)).blob();
         if (!navigator.clipboard || !window.ClipboardItem) throw new Error("Image clipboard unsupported");
         await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
         setCoopStatus("QR COPIED");
       } catch (err) {
-        const img = document.getElementById("coop-qr-img");
-        if (img && img.src && coopCopyTextFallback(img.src)) {
+        const dataUrl = coopQrCanvasDataUrl();
+        if (dataUrl && coopCopyTextFallback(dataUrl)) {
           setCoopStatus("QR DATA COPIED");
           return;
         }
