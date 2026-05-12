@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.11";
-    const BUILD_TIMESTAMP = "2026-05-12 22:09:30 KST";
+    const BUILD_VERSION = "2.1.12";
+    const BUILD_TIMESTAMP = "2026-05-12 22:28:10 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -117,6 +117,10 @@
     let raidAlarmTimer = 0;
     let coopPanel = null;
     let coopSendTimer = 0;
+    let coopWorldTimer = 0;
+    let coopMapTimer = 0;
+    let coopPumpHandle = 0;
+    let coopPumpLast = 0;
     let coopScanStream = null;
     let coopScanFrame = 0;
     let coopPanelPollTimer = 0;
@@ -138,6 +142,9 @@
       localCandidateTypes: "",
       remoteCandidateTypes: "",
       relayMode: false,
+      worldSeq: 0,
+      mapSeq: 0,
+      worldRecvAt: 0,
       lastError: ""
     };
     window.coop = coop;
@@ -2200,8 +2207,26 @@
         player.angle = Math.atan2(aimTarget.y - player.y, aimTarget.x - player.x);
       }
       updateAimRay(aimTarget);
-      if (mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice")) fire();
-      if (mouse.right || keys.has("KeyQ")) throwBomb(aimTarget);
+      if (!coopIsHostWorldClient()) {
+        if (mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice")) fire();
+        if (mouse.right || keys.has("KeyQ")) throwBomb(aimTarget);
+      }
+
+      if (coopIsHostWorldClient()) {
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          p.life -= dt;
+          p.vx *= Math.pow(0.04, dt);
+          p.vy *= Math.pow(0.04, dt);
+          if (p.life <= 0) particles.splice(i, 1);
+        }
+        for (let i = enemyTracers.length - 1; i >= 0; i--) enemyTracers[i].life = Math.max(0, enemyTracers[i].life - dt);
+        for (let i = flameBursts.length - 1; i >= 0; i--) flameBursts[i].life = Math.max(0, flameBursts[i].life - dt);
+        for (let i = iceStorms.length - 1; i >= 0; i--) iceStorms[i].life = Math.max(0, iceStorms[i].life - dt);
+        return;
+      }
 
       for (let i = bullets.length - 1; i >= 0; i--) {
         const b = bullets[i];
@@ -5747,26 +5772,33 @@
       coop.channel = channel;
       channel.onopen = () => {
         coop.connected = true;
+        coopSendTimer = 0;
+        coopWorldTimer = 0;
+        coopMapTimer = 0;
+        coopStartNetworkPump();
         setCoopStatus("CONNECTED");
         coopSendNow();
+        if (coop.role === "host") {
+          setTimeout(() => {
+            coopSendMap();
+            coopSendWorld();
+          }, 0);
+        }
       };
       channel.onclose = () => {
         coop.connected = false;
+        coopStopNetworkPump();
         setCoopStatus("CLOSED");
       };
       channel.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
           if (data.t === "state") {
-            coop.remote = {
-              x: Number(data.x) || 0,
-              y: Number(data.y) || 0,
-              angle: Number(data.angle) || 0,
-              hp: Math.max(0, Math.min(100, Number(data.hp) || 0)),
-              weapon: data.weapon || "rifle",
-              moving: !!data.moving,
-              last: performance.now()
-            };
+            coopApplyRemotePeerState(data);
+          } else if (data.t === "map" && coop.role === "guest") {
+            coopApplyHostMap(data);
+          } else if (data.t === "world" && coop.role === "guest") {
+            coopApplyHostWorld(data);
           }
         } catch (err) {
           console.warn("Bad coop message", err);
@@ -5884,6 +5916,7 @@
       coopStopQrScan(false);
       if (coop.channel) coop.channel.close();
       if (coop.pc) coop.pc.close();
+      coopStopNetworkPump();
       coop.pc = null;
       coop.channel = null;
       coop.role = "";
@@ -5900,6 +5933,12 @@
       coop.localCandidateTypes = "";
       coop.remoteCandidateTypes = "";
       coop.lastError = "";
+      coop.worldSeq = 0;
+      coop.mapSeq = 0;
+      coop.worldRecvAt = 0;
+      coopSendTimer = 0;
+      coopWorldTimer = 0;
+      coopMapTimer = 0;
       if (updateStatus) coop.relayMode = false;
       if (coopPanel) {
         const local = document.getElementById("coop-local");
@@ -5937,14 +5976,206 @@
     }
 
     function updateCoop(dt) {
-      coopSendTimer -= dt;
-      if (coopSendTimer <= 0) {
-        coopSendTimer = 1 / 12;
-        coopSendNow();
-      }
+      coopLerpRemotePeer(dt);
+      coopSmoothHostWorld(dt);
       if (coop.remote && performance.now() - coop.remote.last > 3200) {
         coop.remote = null;
       }
+    }
+
+    function coopStartNetworkPump() {
+      if (coopPumpHandle) return;
+      coopPumpLast = performance.now();
+      coopPumpHandle = setInterval(() => {
+        const now = performance.now();
+        const dt = Math.min(0.2, Math.max(0.001, (now - coopPumpLast) / 1000));
+        coopPumpLast = now;
+        coopNetworkPump(dt);
+      }, 33);
+    }
+
+    function coopStopNetworkPump() {
+      if (coopPumpHandle) clearInterval(coopPumpHandle);
+      coopPumpHandle = 0;
+    }
+
+    function coopNetworkPump(dt) {
+      if (!coop.connected || !coop.channel || coop.channel.readyState !== "open") return;
+      coopSendTimer -= dt;
+      if (coopSendTimer <= 0) {
+        coopSendTimer = 1 / 30;
+        coopSendNow();
+      }
+      if (coop.role === "host") {
+        coopMapTimer -= dt;
+        if (coopMapTimer <= 0) {
+          coopMapTimer = 2.5;
+          coopSendMap();
+        }
+        coopWorldTimer -= dt;
+        if (coopWorldTimer <= 0) {
+          coopWorldTimer = 1 / 20;
+          coopSendWorld();
+        }
+      }
+    }
+
+    function coopSendJson(payload) {
+      if (!coop.channel || coop.channel.readyState !== "open") return false;
+      if (coop.channel.bufferedAmount > 512000 && payload.t === "world") return false;
+      try {
+        coop.channel.send(JSON.stringify(payload));
+        return true;
+      } catch (err) {
+        console.warn("Coop send failed", err);
+        return false;
+      }
+    }
+
+    function coopApplyRemotePeerState(data) {
+      const now = performance.now();
+      const x = Number(data.x) || 0;
+      const y = Number(data.y) || 0;
+      if (!coop.remote) {
+        coop.remote = { x, y, sx: x, sy: y, tx: x, ty: y, interp: 1, last: now };
+      } else {
+        coop.remote.sx = coop.remote.x;
+        coop.remote.sy = coop.remote.y;
+        coop.remote.tx = x;
+        coop.remote.ty = y;
+        coop.remote.interp = 0;
+        coop.remote.last = now;
+      }
+      coop.remote.angle = Number(data.angle) || 0;
+      coop.remote.hp = Math.max(0, Math.min(100, Number(data.hp) || 0));
+      coop.remote.weapon = data.weapon || "rifle";
+      coop.remote.moving = !!data.moving;
+    }
+
+    function coopLerpRemotePeer(dt) {
+      if (!coop.remote) return;
+      const step = Math.min(1, dt * 22);
+      coop.remote.interp = Math.min(1, (coop.remote.interp || 0) + step);
+      const t = 1 - Math.pow(1 - coop.remote.interp, 2);
+      coop.remote.x = (coop.remote.sx || coop.remote.x) + ((coop.remote.tx || coop.remote.x) - (coop.remote.sx || coop.remote.x)) * t;
+      coop.remote.y = (coop.remote.sy || coop.remote.y) + ((coop.remote.ty || coop.remote.y) - (coop.remote.sy || coop.remote.y)) * t;
+    }
+
+    function coopSendMap() {
+      coop.mapSeq++;
+      coopSendJson({ t: "map", seq: coop.mapSeq, data: serializeMapData() });
+    }
+
+    function coopCloneFields(item, fields) {
+      const out = {};
+      for (const key of fields) {
+        if (item[key] !== undefined) out[key] = item[key];
+      }
+      return out;
+    }
+
+    function coopSendWorld() {
+      coop.worldSeq++;
+      coopSendJson({
+        t: "world",
+        seq: coop.worldSeq,
+        kills,
+        wave,
+        doors: doors.map((d) => coopCloneFields(d, ["open", "target", "axis", "x", "y", "w", "h"])),
+        props: props.map((p) => coopCloneFields(p, ["x", "y", "type", "s", "a", "hp", "maxHp", "hitFlash", "buildTime"])),
+        pickups: pickups.map((p) => coopCloneFields(p, ["x", "y", "r", "type", "life", "pulse"])),
+        enemies: enemies.map((e) => coopCloneFields(e, ["x", "y", "r", "collisionR", "hp", "maxHp", "angle", "kind", "fast", "freeze", "dropTime", "dropMax", "dropHeight", "raidLeader", "raidAggressive", "wobble"])),
+        bullets: bullets.map((b) => coopCloneFields(b, ["x", "y", "vx", "vy", "r", "life"])),
+        bombs: bombs.map((b) => coopCloneFields(b, ["x", "y", "sx", "sy", "tx", "ty", "life", "maxLife", "r", "hostile"])),
+        enemyTracers: enemyTracers.map((tr) => coopCloneFields(tr, ["x1", "y1", "x2", "y2", "life", "maxLife"])),
+        flameBursts: flameBursts.map((f) => coopCloneFields(f, ["x", "y", "angle", "life", "maxLife", "range"])),
+        iceStorms: iceStorms.map((s) => coopCloneFields(s, ["x", "y", "angle", "life", "maxLife", "range"]))
+      });
+    }
+
+    function coopApplyHostMap(data) {
+      if (!data || data.seq <= coop.mapSeq || !data.data) return;
+      coop.mapSeq = data.seq;
+      applyMapData(data.data);
+    }
+
+    function coopCopyArray(target, source) {
+      target.length = 0;
+      if (!Array.isArray(source)) return;
+      for (const item of source) target.push({ ...item });
+    }
+
+    function coopApplyHostWorld(data) {
+      if (!data || data.seq <= coop.worldSeq) return;
+      coop.worldSeq = data.seq;
+      coop.worldRecvAt = performance.now();
+      kills = Number.isFinite(data.kills) ? data.kills : kills;
+      wave = Number.isFinite(data.wave) ? data.wave : wave;
+      if (Array.isArray(data.doors)) {
+        for (let i = 0; i < data.doors.length; i++) {
+          if (!doors[i]) doors[i] = { x: data.doors[i].x, y: data.doors[i].y, w: data.doors[i].w, h: data.doors[i].h, axis: data.doors[i].axis || "h", open: 0, target: 0, range: 34 };
+          doors[i].open = Number(data.doors[i].open) || 0;
+          doors[i].target = Number(data.doors[i].target) || 0;
+        }
+      }
+      coopCopyArray(props, data.props);
+      coopCopyArray(pickups, data.pickups);
+      coopCopyArray(bullets, data.bullets);
+      coopCopyArray(bombs, data.bombs);
+      coopCopyArray(enemyTracers, data.enemyTracers);
+      coopCopyArray(flameBursts, data.flameBursts);
+      coopCopyArray(iceStorms, data.iceStorms);
+      coopApplyHostEnemies(data.enemies);
+    }
+
+    function coopApplyHostEnemies(remoteEnemies) {
+      if (!Array.isArray(remoteEnemies)) {
+        enemies.length = 0;
+        return;
+      }
+      while (enemies.length > remoteEnemies.length) enemies.pop();
+      for (let i = 0; i < remoteEnemies.length; i++) {
+        const incoming = remoteEnemies[i];
+        const current = enemies[i] || {};
+        const tx = Number(incoming.x) || 0;
+        const ty = Number(incoming.y) || 0;
+        if (!enemies[i]) {
+          enemies[i] = { ...incoming, x: tx, y: ty, netX: tx, netY: ty };
+        } else {
+          const oldX = Number.isFinite(current.x) ? current.x : tx;
+          const oldY = Number.isFinite(current.y) ? current.y : ty;
+          Object.assign(current, incoming);
+          current.x = oldX;
+          current.y = oldY;
+          current.netX = tx;
+          current.netY = ty;
+          enemies[i] = current;
+        }
+      }
+    }
+
+    function coopSmoothHostWorld(dt) {
+      if (coop.role !== "guest" || !coop.connected) return;
+      for (const e of enemies) {
+        if (Number.isFinite(e.netX)) e.x += (e.netX - e.x) * Math.min(1, dt * 24);
+        if (Number.isFinite(e.netY)) e.y += (e.netY - e.y) * Math.min(1, dt * 24);
+      }
+      for (const b of bullets) {
+        if (Number.isFinite(b.vx)) b.x += b.vx * dt;
+        if (Number.isFinite(b.vy)) b.y += b.vy * dt;
+        b.life = Math.max(0, (b.life || 0) - dt);
+      }
+      for (const b of bombs) {
+        b.life = Math.max(0, (b.life || 0) - dt);
+        const t = 1 - Math.max(0, b.life / (b.maxLife || 1));
+        const ease = 1 - Math.pow(1 - t, 2);
+        b.x = b.sx + (b.tx - b.sx) * ease;
+        b.y = b.sy + (b.ty - b.sy) * ease;
+      }
+    }
+
+    function coopIsHostWorldClient() {
+      return coop.connected && coop.role === "guest";
     }
 
     function drawRemoteCoopPeer() {
