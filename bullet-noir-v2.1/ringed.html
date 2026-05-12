@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.13";
-    const BUILD_TIMESTAMP = "2026-05-13 00:14:42 KST";
+    const BUILD_VERSION = "2.1.14";
+    const BUILD_TIMESTAMP = "2026-05-13 00:36:18 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -142,6 +142,8 @@
       localCandidateTypes: "",
       remoteCandidateTypes: "",
       relayMode: false,
+      busy: false,
+      busyText: "",
       worldSeq: 0,
       mapSeq: 0,
       worldRecvAt: 0,
@@ -5071,11 +5073,37 @@
       ctx.restore();
     }
 
+    function coopStatusText() {
+      return coop.busy ? coop.busyText + " 진행중..." : coop.status;
+    }
+
+    function coopRenderStatus() {
+      const node = document.getElementById("coop-status");
+      if (node) node.textContent = coopStatusText();
+    }
+
     function setCoopStatus(text) {
       coop.status = text;
-      const node = document.getElementById("coop-status");
-      if (node) node.textContent = text;
+      coopRenderStatus();
       coopRefreshPanel();
+    }
+
+    function coopSetBusy(text) {
+      coop.busy = !!text;
+      coop.busyText = text || "";
+      coopRenderStatus();
+      coopRefreshPanel();
+    }
+
+    async function coopRunBusy(label, task) {
+      if (coop.busy) return false;
+      coopSetBusy(label);
+      try {
+        await task();
+        return true;
+      } finally {
+        coopSetBusy("");
+      }
     }
 
     function coopChooseHost() {
@@ -5083,7 +5111,7 @@
       coop.codeView = "local";
       coop.scannedOfferReady = false;
       coopRefreshPanel();
-      coopStartHost();
+      return coopStartHost();
     }
 
     function coopChooseGuest() {
@@ -5099,24 +5127,22 @@
 
     function coopPrimaryScanAction() {
       if (coop.role === "guest" && (coop.scannedOfferReady || !!coopGetRemoteSignal()) && !coopGetLocalSignal()) {
-        coopUseRemoteCode(coopGetRemoteSignal());
-        return;
+        return coopUseRemoteCode(coopGetRemoteSignal());
       }
-      coopStartQrScan();
+      return coopStartQrScan();
     }
 
     function coopUseButtonAction() {
       if (coop.role === "host" && (/^FAILED\b/.test(coop.status) || /^TURN RELAY FAIL\b/.test(coop.status) || coop.lastError)) {
-        coopStartRelayRetry();
-        return;
+        return coopStartRelayRetry();
       }
-      coopUseRemoteCode(document.getElementById("coop-code").value);
+      return coopUseRemoteCode(document.getElementById("coop-code").value);
     }
 
     function coopStartRelayRetry() {
       coop.relayMode = true;
       coopToast("RELAY QR CREATING");
-      coopChooseHost();
+      return coopChooseHost();
     }
 
     function coopSetVisibleCode(text, readonly) {
@@ -5170,11 +5196,17 @@
     function coopRefreshPanel() {
       if (!coopPanel) return;
       coopSyncManualCodeInput();
+      coopRenderStatus();
       const roleRow = document.getElementById("coop-role-row");
       const actionRow = document.getElementById("coop-action-row");
       const scanButton = document.getElementById("coop-scan");
       const useButton = document.getElementById("coop-use");
       const qrButton = document.getElementById("coop-qr-toggle");
+      const hostButton = document.getElementById("coop-host");
+      const guestButton = document.getElementById("coop-guest");
+      const resetButton = document.getElementById("coop-disconnect");
+      const copyButton = document.getElementById("coop-copy");
+      const copyQrButton = document.getElementById("coop-copy-qr");
       const copyRow = document.getElementById("coop-copy-row");
       const codeLabel = document.getElementById("coop-code-label");
       const help = document.getElementById("coop-help");
@@ -5226,6 +5258,18 @@
       const mode = "MODE " + (coop.relayMode ? "RELAY" : "DIRECT");
       const role = mode + " / ROLE " + (coop.role || "-") + " / VIEW " + (coop.codeView || "-");
       net.textContent = role + " / PC " + coop.pcState + " / ICE " + coop.iceState + " / GATHER " + coop.iceGathering + " / CAND " + coop.localCandidates + ":" + coop.remoteCandidates + types + error;
+      const lockButtons = [hostButton, guestButton, useButton, scanButton, qrButton, copyButton, copyQrButton];
+      lockButtons.forEach((button) => {
+        if (!button) return;
+        button.disabled = coop.busy;
+        button.style.opacity = coop.busy ? "0.46" : "1";
+        button.style.pointerEvents = coop.busy ? "none" : "auto";
+      });
+      if (resetButton) {
+        resetButton.disabled = false;
+        resetButton.style.opacity = "1";
+        resetButton.style.pointerEvents = "auto";
+      }
     }
 
     function ensureCoopPanel() {
@@ -5280,14 +5324,26 @@
       const buttonStyle = "background:#162234;color:#eef6ff;border:1px solid #405a72;border-radius:5px;padding:7px 6px;font-weight:700";
       coopPanel.querySelectorAll("button").forEach((button) => button.style.cssText = button.id === "coop-close" ? buttonStyle + ";padding:3px 8px" : buttonStyle);
       document.getElementById("coop-close").onclick = () => coopPanel.style.display = "none";
-      document.getElementById("coop-host").onclick = () => coopChooseHost();
-      document.getElementById("coop-guest").onclick = () => coopChooseGuest();
-      document.getElementById("coop-use").onclick = () => coopUseButtonAction();
+      document.getElementById("coop-host").onclick = () => coopRunBusy("HOSTING", () => coopChooseHost());
+      document.getElementById("coop-guest").onclick = () => {
+        if (coop.busy) return;
+        coopChooseGuest();
+      };
+      document.getElementById("coop-use").onclick = () => coopRunBusy("CONNECTING", () => coopUseButtonAction());
       document.getElementById("coop-disconnect").onclick = () => coopDisconnect();
-      document.getElementById("coop-scan").onclick = () => coopPrimaryScanAction();
-      document.getElementById("coop-copy").onclick = () => coopCopyLocalSignal();
-      document.getElementById("coop-qr-toggle").onclick = () => coopToggleQr();
-      document.getElementById("coop-copy-qr").onclick = () => coopCopyQrImage();
+      document.getElementById("coop-scan").onclick = () => coopRunBusy(coop.scannedOfferReady || coopGetRemoteSignal() ? "CONNECTING" : "SCANNING", () => coopPrimaryScanAction());
+      document.getElementById("coop-copy").onclick = () => {
+        if (coop.busy) return;
+        coopCopyLocalSignal();
+      };
+      document.getElementById("coop-qr-toggle").onclick = () => {
+        if (coop.busy) return;
+        coopToggleQr();
+      };
+      document.getElementById("coop-copy-qr").onclick = () => {
+        if (coop.busy) return;
+        coopCopyQrImage();
+      };
       const codeNode = document.getElementById("coop-code");
       const handleCodeEdit = () => {
         if (coop.codeView !== "local") {
@@ -5936,6 +5992,10 @@
       coop.localCandidateTypes = "";
       coop.remoteCandidateTypes = "";
       coop.lastError = "";
+      if (updateStatus) {
+        coop.busy = false;
+        coop.busyText = "";
+      }
       coop.worldSeq = 0;
       coop.mapSeq = 0;
       coop.worldRecvAt = 0;
