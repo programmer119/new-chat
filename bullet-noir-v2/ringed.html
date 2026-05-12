@@ -2400,6 +2400,10 @@
         maxLife: 0.08
       });
       damageBarricadesInCone(sx, sy, dx, dy, enemy.fast ? 188 : 210, enemy.fast ? 34 : 40, 0.18, enemy.fast ? 1 : 2);
+      const barrierHit = raycastEnemyShot(sx, sy, dx, dy, Math.hypot(player.x - sx, player.y - sy));
+      if (barrierHit.prop && barrierHit.prop.type === "barricade") {
+        return;
+      }
       if (player.invuln <= 0) {
         player.hp -= enemy.fast ? 8 : 12;
         player.invuln = 0.14;
