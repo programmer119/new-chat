@@ -5027,21 +5027,19 @@
         '<strong>WEBRTC COOP</strong><button id="coop-close" type="button">X</button></div>' +
         '<div id="coop-status" style="margin-bottom:8px;color:#9ed8ff">OFFLINE</div>' +
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">' +
-        '<button id="coop-host" type="button">HOST OFFER</button>' +
-        '<button id="coop-join" type="button">JOIN OFFER</button>' +
-        '<button id="coop-accept" type="button">HOST ACCEPT ANSWER</button>' +
-        '<button id="coop-disconnect" type="button">DISCONNECT</button>' +
+        '<button id="coop-host" type="button">1 HOST</button>' +
+        '<button id="coop-use" type="button">2 USE CODE</button>' +
         '<button id="coop-scan" type="button">SCAN QR</button>' +
-        '<button id="coop-stop-scan" type="button">STOP SCAN</button></div>' +
-        '<label style="display:block;margin:6px 0 3px">내 신호 복사</label>' +
-        '<textarea id="coop-local" readonly style="width:100%;height:94px;box-sizing:border-box;background:#101722;color:#dcecff;border:1px solid #33485e"></textarea>' +
-        '<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><button id="coop-copy" type="button">COPY</button><button id="coop-qr-toggle" type="button">QR</button><span id="coop-qr-note" style="color:#b9c5d0">긴 신호는 QR이 안 나올 수 있음</span></div>' +
+        '<button id="coop-disconnect" type="button">RESET</button></div>' +
+        '<label style="display:block;margin:6px 0 3px">MY CODE / QR</label>' +
+        '<textarea id="coop-local" readonly style="width:100%;height:64px;box-sizing:border-box;background:#101722;color:#dcecff;border:1px solid #33485e;font-size:11px"></textarea>' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><button id="coop-copy" type="button">COPY CODE</button><button id="coop-qr-toggle" type="button">SHOW QR</button><span id="coop-qr-note" style="color:#b9c5d0">Host shares this first. Guest sends back its code.</span></div>' +
         '<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><button id="coop-copy-qr" type="button">COPY QR</button><span style="color:#b9c5d0">QR is generated locally.</span></div>' +
         '<div id="coop-qr-box" style="display:none;margin-top:8px;padding:12px;background:#fff;width:max-content;max-width:100%;box-sizing:border-box"><canvas id="coop-qr-canvas" width="300" height="300" style="display:block;width:min(300px,calc(100vw - 72px));height:min(300px,calc(100vw - 72px));image-rendering:pixelated"></canvas></div>' +
         '<div id="coop-scan-box" style="display:none;margin-top:8px"><video id="coop-scan-video" playsinline muted style="width:100%;max-height:240px;background:#000;border:1px solid #405a72"></video><canvas id="coop-scan-canvas" style="display:none"></canvas></div>' +
-        '<label style="display:block;margin:8px 0 3px">상대 신호 붙여넣기</label>' +
-        '<textarea id="coop-remote" style="width:100%;height:94px;box-sizing:border-box;background:#101722;color:#dcecff;border:1px solid #33485e"></textarea>' +
-        '<div style="margin-top:8px;color:#b9c5d0;line-height:1.35">호스트: HOST OFFER -> 복사 전달. 게스트: 붙여넣고 JOIN OFFER -> answer 전달. 호스트: answer 붙여넣고 HOST ACCEPT ANSWER.</div>';
+        '<label style="display:block;margin:8px 0 3px">FRIEND CODE / QR RESULT</label>' +
+        '<textarea id="coop-remote" style="width:100%;height:64px;box-sizing:border-box;background:#101722;color:#dcecff;border:1px solid #33485e;font-size:11px"></textarea>' +
+        '<div style="margin-top:8px;color:#b9c5d0;line-height:1.35">HOST: press 1 HOST and share code/QR. GUEST: paste or scan it, then share the new code/QR back. HOST: paste or scan guest code and press 2 USE CODE.</div>';
       document.body.appendChild(coopPanel);
       for (const eventName of ["mousedown", "mouseup", "mousemove", "click", "touchstart", "touchmove", "touchend", "pointerdown", "pointerup"]) {
         coopPanel.addEventListener(eventName, (event) => {
@@ -5052,11 +5050,9 @@
       coopPanel.querySelectorAll("button").forEach((button) => button.style.cssText = button.id === "coop-close" ? buttonStyle + ";padding:3px 8px" : buttonStyle);
       document.getElementById("coop-close").onclick = () => coopPanel.style.display = "none";
       document.getElementById("coop-host").onclick = () => coopStartHost();
-      document.getElementById("coop-join").onclick = () => coopStartJoiner(document.getElementById("coop-remote").value);
-      document.getElementById("coop-accept").onclick = () => coopAcceptAnswer(document.getElementById("coop-remote").value);
+      document.getElementById("coop-use").onclick = () => coopUseRemoteCode(document.getElementById("coop-remote").value);
       document.getElementById("coop-disconnect").onclick = () => coopDisconnect();
       document.getElementById("coop-scan").onclick = () => coopStartQrScan();
-      document.getElementById("coop-stop-scan").onclick = () => coopStopQrScan();
       document.getElementById("coop-copy").onclick = () => coopCopyLocalSignal();
       document.getElementById("coop-qr-toggle").onclick = () => coopToggleQr();
       document.getElementById("coop-copy-qr").onclick = () => coopCopyQrImage();
@@ -5081,6 +5077,56 @@
     function coopApplyRemoteSignal(text) {
       ensureCoopPanel();
       document.getElementById("coop-remote").value = text;
+    }
+
+    async function coopSetLocalDescriptionSignal(description) {
+      const packed = await coopPackSignal(description);
+      coopSetLocalSignal(packed);
+    }
+
+    async function coopPackSignal(description) {
+      const json = JSON.stringify(description);
+      if (window.CompressionStream) {
+        try {
+          const stream = new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"));
+          const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+          return "BN1." + coopBase64UrlEncode(bytes);
+        } catch (err) {
+          console.warn("Signal compression failed", err);
+        }
+      }
+      return "BNR." + coopBase64UrlEncode(new TextEncoder().encode(json));
+    }
+
+    async function coopUnpackSignal(text) {
+      const code = (text || "").trim();
+      if (!code) throw new Error("Empty code");
+      if (code.startsWith("{")) return JSON.parse(code);
+      if (code.startsWith("BN1.")) {
+        if (!window.DecompressionStream) throw new Error("Compressed code unsupported");
+        const bytes = coopBase64UrlDecode(code.slice(4));
+        const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+        return JSON.parse(await new Response(stream).text());
+      }
+      if (code.startsWith("BNR.")) {
+        return JSON.parse(new TextDecoder().decode(coopBase64UrlDecode(code.slice(4))));
+      }
+      throw new Error("Unknown code");
+    }
+
+    function coopBase64UrlEncode(bytes) {
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+    }
+
+    function coopBase64UrlDecode(text) {
+      const normalized = text.replace(/-/g, "+").replace(/_/g, "/");
+      const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+      const binary = atob(padded);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return bytes;
     }
 
     async function coopCopyLocalSignal() {
@@ -5276,7 +5322,7 @@
       coopStopQrScan(false);
       coopApplyRemoteSignal(text);
       try {
-        const signal = JSON.parse(text);
+        const signal = await coopUnpackSignal(text);
         if (signal.type === "offer") {
           setCoopStatus("QR OFFER FOUND");
           await coopStartJoiner(text);
@@ -5288,6 +5334,27 @@
         }
       } catch (err) {
         setCoopStatus("QR INVALID");
+        console.error(err);
+      }
+    }
+
+    async function coopUseRemoteCode(text) {
+      try {
+        ensureCoopPanel();
+        const code = (text || coopGetRemoteSignal()).trim();
+        const signal = await coopUnpackSignal(code);
+        coopApplyRemoteSignal(code);
+        if (signal.type === "offer") {
+          setCoopStatus("OFFER FOUND");
+          await coopStartJoiner(code);
+        } else if (signal.type === "answer") {
+          setCoopStatus("ANSWER FOUND");
+          await coopAcceptAnswer(code);
+        } else {
+          setCoopStatus("BAD CODE");
+        }
+      } catch (err) {
+        setCoopStatus("BAD CODE");
         console.error(err);
       }
     }
@@ -5380,8 +5447,8 @@
         coopAttachChannel(pc.createDataChannel("sang-sub-coop"));
         await pc.setLocalDescription(await pc.createOffer());
         await coopWaitIce(pc);
-        coopSetLocalSignal(JSON.stringify(pc.localDescription));
-        setCoopStatus("SEND OFFER");
+        await coopSetLocalDescriptionSignal(pc.localDescription);
+        setCoopStatus("SHARE HOST CODE");
       } catch (err) {
         setCoopStatus("ERROR");
         console.error(err);
@@ -5394,11 +5461,11 @@
         setCoopStatus("JOINING");
         const pc = coopCreatePeer();
         coop.role = "guest";
-        await pc.setRemoteDescription(JSON.parse(offerText || coopGetRemoteSignal()));
+        await pc.setRemoteDescription(await coopUnpackSignal(offerText || coopGetRemoteSignal()));
         await pc.setLocalDescription(await pc.createAnswer());
         await coopWaitIce(pc);
-        coopSetLocalSignal(JSON.stringify(pc.localDescription));
-        setCoopStatus("SEND ANSWER");
+        await coopSetLocalDescriptionSignal(pc.localDescription);
+        setCoopStatus("SEND GUEST CODE");
       } catch (err) {
         setCoopStatus("ERROR");
         console.error(err);
@@ -5408,7 +5475,7 @@
     async function coopAcceptAnswer(answerText) {
       try {
         if (!coop.pc) throw new Error("Host peer missing");
-        await coop.pc.setRemoteDescription(JSON.parse(answerText || coopGetRemoteSignal()));
+        await coop.pc.setRemoteDescription(await coopUnpackSignal(answerText || coopGetRemoteSignal()));
         setCoopStatus("CONNECTING");
       } catch (err) {
         setCoopStatus("ERROR");
