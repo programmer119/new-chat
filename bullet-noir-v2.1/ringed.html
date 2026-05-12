@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.6";
-    const BUILD_TIMESTAMP = "2026-05-12 21:08:51 KST";
+    const BUILD_VERSION = "2.1.7";
+    const BUILD_TIMESTAMP = "2026-05-12 21:17:00 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -133,7 +133,10 @@
       iceState: "new",
       iceGathering: "new",
       localCandidates: 0,
-      remoteCandidates: 0
+      remoteCandidates: 0,
+      localCandidateTypes: "",
+      remoteCandidateTypes: "",
+      lastError: ""
     };
     window.coop = coop;
     const isMobile = detectMobileDevice();
@@ -5095,8 +5098,22 @@
       coopRefreshPanel();
     }
 
+    function coopSyncManualCodeInput() {
+      if (!coopPanel || coop.codeView === "local") return;
+      const codeNode = document.getElementById("coop-code");
+      const remoteNode = document.getElementById("coop-remote");
+      if (!codeNode || !remoteNode) return;
+      const value = codeNode.value || "";
+      if (remoteNode.value !== value) remoteNode.value = value;
+      if (coop.role === "guest" && !coopGetLocalSignal()) {
+        const ready = !!value.trim();
+        if (coop.scannedOfferReady !== ready) coop.scannedOfferReady = ready;
+      }
+    }
+
     function coopRefreshPanel() {
       if (!coopPanel) return;
+      coopSyncManualCodeInput();
       const roleRow = document.getElementById("coop-role-row");
       const actionRow = document.getElementById("coop-action-row");
       const scanButton = document.getElementById("coop-scan");
@@ -5138,7 +5155,9 @@
           help.textContent = (coop.scannedOfferReady || hasRemote) ? "Press CONNECT to create your guest code." : "Scan the host QR.";
         }
       }
-      net.textContent = "PC " + coop.pcState + " / ICE " + coop.iceState + " / GATHER " + coop.iceGathering + " / CAND " + coop.localCandidates + ":" + coop.remoteCandidates;
+      const types = " / TYPE " + (coop.localCandidateTypes || "-") + ":" + (coop.remoteCandidateTypes || "-");
+      const error = coop.lastError ? " / ERR " + coop.lastError : "";
+      net.textContent = "PC " + coop.pcState + " / ICE " + coop.iceState + " / GATHER " + coop.iceGathering + " / CAND " + coop.localCandidates + ":" + coop.remoteCandidates + types + error;
     }
 
     function ensureCoopPanel() {
@@ -5201,17 +5220,17 @@
       document.getElementById("coop-copy").onclick = () => coopCopyLocalSignal();
       document.getElementById("coop-qr-toggle").onclick = () => coopToggleQr();
       document.getElementById("coop-copy-qr").onclick = () => coopCopyQrImage();
-      document.getElementById("coop-code").oninput = (event) => {
+      const codeNode = document.getElementById("coop-code");
+      const handleCodeEdit = () => {
         if (coop.codeView !== "local") {
-          document.getElementById("coop-remote").value = event.target.value;
-          if (coop.role === "guest" && !coopGetLocalSignal()) {
-            coop.scannedOfferReady = !!event.target.value.trim();
-            setCoopStatus(coop.scannedOfferReady ? "HOST CODE READY" : "SCAN HOST QR");
-          } else {
-            coopRefreshPanel();
-          }
+          coopSyncManualCodeInput();
+          if (coop.role === "guest" && !coopGetLocalSignal()) setCoopStatus(coop.scannedOfferReady ? "HOST CODE READY" : "SCAN HOST QR");
+          else coopRefreshPanel();
         }
       };
+      for (const eventName of ["input", "change", "keyup", "paste", "drop"]) {
+        codeNode.addEventListener(eventName, () => setTimeout(handleCodeEdit, 0));
+      }
       coopRefreshPanel();
     }
 
@@ -5280,7 +5299,7 @@
     }
 
     async function coopSetLocalDescriptionSignal(description) {
-      coop.localCandidates = coopCountCandidates(description);
+      coopSetCandidateInfo("local", description);
       const packed = await coopPackSignal(description);
       coopSetLocalSignal(packed);
     }
@@ -5289,6 +5308,29 @@
       const sdp = description && description.sdp ? description.sdp : "";
       const matches = sdp.match(/^a=candidate:/gm);
       return matches ? matches.length : 0;
+    }
+
+    function coopCandidateTypes(description) {
+      const sdp = description && description.sdp ? description.sdp : "";
+      const types = [];
+      const regex = / typ ([a-zA-Z0-9]+)/g;
+      let match;
+      while ((match = regex.exec(sdp))) {
+        if (!types.includes(match[1])) types.push(match[1]);
+      }
+      return types.join("+");
+    }
+
+    function coopSetCandidateInfo(side, description) {
+      const count = coopCountCandidates(description);
+      const types = coopCandidateTypes(description);
+      if (side === "local") {
+        coop.localCandidates = count;
+        coop.localCandidateTypes = types;
+      } else {
+        coop.remoteCandidates = count;
+        coop.remoteCandidateTypes = types;
+      }
     }
 
     async function coopPackSignal(description) {
@@ -5545,7 +5587,7 @@
       coopApplyRemoteSignal(text);
       try {
         const signal = await coopUnpackSignal(text);
-        coop.remoteCandidates = coopCountCandidates(signal);
+        coopSetCandidateInfo("remote", signal);
         if (signal.type === "offer") {
           coop.scannedOfferReady = true;
           setCoopStatus("HOST QR SCANNED");
@@ -5570,7 +5612,7 @@
         }
         const code = (text || coopGetRemoteSignal()).trim();
       const signal = await coopUnpackSignal(code);
-      coop.remoteCandidates = coopCountCandidates(signal);
+      coopSetCandidateInfo("remote", signal);
       coopApplyRemoteSignal(code);
         if (signal.type === "offer") {
           setCoopStatus("OFFER FOUND");
@@ -5611,6 +5653,7 @@
       coop.iceGathering = pc.iceGatheringState || "new";
       pc.onconnectionstatechange = () => {
         coop.pcState = pc.connectionState || "unknown";
+        coop.lastError = "";
         coop.connected = pc.connectionState === "connected";
         if (coop.connected) {
           coop.exchanging = false;
@@ -5618,14 +5661,23 @@
           return;
         }
         if (coop.exchanging && (pc.connectionState === "failed" || pc.connectionState === "disconnected")) {
+          coop.lastError = pc.connectionState === "failed" ? "PC_FAILED" : "PC_DISCONNECTED";
           setCoopStatus(coop.role === "guest" ? "GUEST CODE READY" : "WAIT GUEST CODE");
           return;
         }
+        if (pc.connectionState === "failed") coop.lastError = "PC_FAILED";
         setCoopStatus(pc.connectionState === "failed" ? "FAILED - NETWORK" : pc.connectionState.toUpperCase());
       };
       pc.oniceconnectionstatechange = () => {
         coop.iceState = pc.iceConnectionState || "unknown";
-        if (pc.iceConnectionState === "failed") setCoopStatus("FAILED - NETWORK");
+        if (pc.iceConnectionState === "failed") {
+          coop.lastError = "ICE_FAILED";
+          setCoopStatus("FAILED - NETWORK");
+        }
+        else if (pc.iceConnectionState === "disconnected") {
+          coop.lastError = "ICE_DISCONNECTED";
+          coopRefreshPanel();
+        }
         else coopRefreshPanel();
       };
       pc.onicegatheringstatechange = () => {
@@ -5633,7 +5685,7 @@
         coopRefreshPanel();
       };
       pc.onicecandidate = () => {
-        coop.localCandidates = coopCountCandidates(pc.localDescription);
+        coopSetCandidateInfo("local", pc.localDescription);
         coopRefreshPanel();
       };
       pc.ondatachannel = (event) => coopAttachChannel(event.channel);
@@ -5673,7 +5725,7 @@
 
     async function coopWaitIce(pc) {
       if (pc.iceGatheringState === "complete") {
-        coop.localCandidates = coopCountCandidates(pc.localDescription);
+        coopSetCandidateInfo("local", pc.localDescription);
         coopRefreshPanel();
         return;
       }
@@ -5684,7 +5736,7 @@
             settled = true;
             pc.removeEventListener("icegatheringstatechange", done);
             pc.removeEventListener("icecandidate", candidateDone);
-            coop.localCandidates = coopCountCandidates(pc.localDescription);
+            coopSetCandidateInfo("local", pc.localDescription);
             coopRefreshPanel();
             setTimeout(resolve, 250);
           }
@@ -5694,7 +5746,7 @@
             settled = true;
             pc.removeEventListener("icegatheringstatechange", done);
             pc.removeEventListener("icecandidate", candidateDone);
-            coop.localCandidates = coopCountCandidates(pc.localDescription);
+            coopSetCandidateInfo("local", pc.localDescription);
             coopRefreshPanel();
             setTimeout(resolve, 250);
           }
@@ -5706,7 +5758,7 @@
             settled = true;
             pc.removeEventListener("icegatheringstatechange", done);
             pc.removeEventListener("icecandidate", candidateDone);
-            coop.localCandidates = coopCountCandidates(pc.localDescription);
+            coopSetCandidateInfo("local", pc.localDescription);
             coopRefreshPanel();
             resolve();
           }
@@ -5744,7 +5796,7 @@
         coop.role = "guest";
         coop.exchanging = true;
         const offer = await coopUnpackSignal(offerText || coopGetRemoteSignal());
-        coop.remoteCandidates = coopCountCandidates(offer);
+        coopSetCandidateInfo("remote", offer);
         await pc.setRemoteDescription(offer);
         await pc.setLocalDescription(await pc.createAnswer());
         await coopWaitIce(pc);
@@ -5762,7 +5814,7 @@
       try {
         if (!coop.pc) throw new Error("Host peer missing");
         const answer = await coopUnpackSignal(answerText || coopGetRemoteSignal());
-        coop.remoteCandidates = coopCountCandidates(answer);
+        coopSetCandidateInfo("remote", answer);
         await coop.pc.setRemoteDescription(answer);
         coop.exchanging = false;
         setCoopStatus("CONNECTING");
@@ -5789,6 +5841,9 @@
       coop.iceGathering = "new";
       coop.localCandidates = 0;
       coop.remoteCandidates = 0;
+      coop.localCandidateTypes = "";
+      coop.remoteCandidateTypes = "";
+      coop.lastError = "";
       if (coopPanel) {
         const local = document.getElementById("coop-local");
         const remote = document.getElementById("coop-remote");
