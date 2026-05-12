@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.2";
-    const BUILD_TIMESTAMP = "2026-05-12 20:31:20 KST";
+    const BUILD_VERSION = "2.1.3";
+    const BUILD_TIMESTAMP = "2026-05-12 20:41:20 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -128,7 +128,12 @@
       connected: false,
       exchanging: false,
       codeView: "remote",
-      scannedOfferReady: false
+      scannedOfferReady: false,
+      pcState: "new",
+      iceState: "new",
+      iceGathering: "new",
+      localCandidates: 0,
+      remoteCandidates: 0
     };
     window.coop = coop;
     const isMobile = detectMobileDevice();
@@ -5099,7 +5104,8 @@
       const copyRow = document.getElementById("coop-copy-row");
       const codeLabel = document.getElementById("coop-code-label");
       const help = document.getElementById("coop-help");
-      if (!roleRow || !actionRow || !scanButton || !useButton || !qrButton || !copyRow || !codeLabel || !help) return;
+      const net = document.getElementById("coop-net");
+      if (!roleRow || !actionRow || !scanButton || !useButton || !qrButton || !copyRow || !codeLabel || !help || !net) return;
       const hasLocal = !!coopGetLocalSignal();
       const hasRemote = !!coopGetRemoteSignal();
       roleRow.style.display = coop.role ? "none" : "grid";
@@ -5131,6 +5137,7 @@
           help.textContent = coop.scannedOfferReady ? "Press CONNECT to create your guest code." : "Scan the host QR.";
         }
       }
+      net.textContent = "PC " + coop.pcState + " / ICE " + coop.iceState + " / GATHER " + coop.iceGathering + " / CAND " + coop.localCandidates + ":" + coop.remoteCandidates;
     }
 
     function ensureCoopPanel() {
@@ -5174,7 +5181,8 @@
         '<div id="coop-copy-row" style="display:none;align-items:center;gap:8px;margin-top:6px"><button id="coop-copy" type="button">COPY CODE</button><button id="coop-copy-qr" type="button">COPY QR</button><span id="coop-qr-note" style="color:#b9c5d0">QR is generated locally.</span></div>' +
         '<div id="coop-qr-box" style="display:none;margin-top:8px;padding:12px;background:#fff;width:max-content;max-width:100%;box-sizing:border-box"><canvas id="coop-qr-canvas" width="300" height="300" style="display:block;width:min(300px,calc(100vw - 72px));height:min(300px,calc(100vw - 72px));image-rendering:pixelated"></canvas></div>' +
         '<div id="coop-scan-box" style="display:none;margin-top:8px"><video id="coop-scan-video" playsinline muted style="width:100%;max-height:240px;background:#000;border:1px solid #405a72"></video><canvas id="coop-scan-canvas" style="display:none"></canvas></div>' +
-        '<div id="coop-help" style="margin-top:8px;color:#b9c5d0;line-height:1.35">Choose HOST on PC and GUEST on phone.</div>';
+        '<div id="coop-help" style="margin-top:8px;color:#b9c5d0;line-height:1.35">Choose HOST on PC and GUEST on phone.</div>' +
+        '<div id="coop-net" style="margin-top:6px;color:#7f8fa3;font-size:10px;line-height:1.3">PC new / ICE new / GATHER new / CAND 0:0</div>';
       document.body.appendChild(coopPanel);
       for (const eventName of ["mousedown", "mouseup", "mousemove", "click", "touchstart", "touchmove", "touchend", "pointerdown", "pointerup"]) {
         coopPanel.addEventListener(eventName, (event) => {
@@ -5226,8 +5234,15 @@
     }
 
     async function coopSetLocalDescriptionSignal(description) {
+      coop.localCandidates = coopCountCandidates(description);
       const packed = await coopPackSignal(description);
       coopSetLocalSignal(packed);
+    }
+
+    function coopCountCandidates(description) {
+      const sdp = description && description.sdp ? description.sdp : "";
+      const matches = sdp.match(/^a=candidate:/gm);
+      return matches ? matches.length : 0;
     }
 
     async function coopPackSignal(description) {
@@ -5470,6 +5485,7 @@
       coopApplyRemoteSignal(text);
       try {
         const signal = await coopUnpackSignal(text);
+        coop.remoteCandidates = coopCountCandidates(signal);
         if (signal.type === "offer") {
           coop.scannedOfferReady = true;
           setCoopStatus("HOST QR SCANNED");
@@ -5493,8 +5509,9 @@
           return;
         }
         const code = (text || coopGetRemoteSignal()).trim();
-        const signal = await coopUnpackSignal(code);
-        coopApplyRemoteSignal(code);
+      const signal = await coopUnpackSignal(code);
+      coop.remoteCandidates = coopCountCandidates(signal);
+      coopApplyRemoteSignal(code);
         if (signal.type === "offer") {
           setCoopStatus("OFFER FOUND");
           await coopStartJoiner(code);
@@ -5514,10 +5531,22 @@
       if (!window.RTCPeerConnection) throw new Error("WebRTC unsupported");
       coopDisconnect(false);
       const pc = new RTCPeerConnection({
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+          { urls: "stun:stun2.l.google.com:19302" },
+          { urls: "stun:global.stun.twilio.com:3478" }
+        ],
+        iceCandidatePoolSize: 8,
+        bundlePolicy: "max-bundle",
+        rtcpMuxPolicy: "require"
       });
       coop.pc = pc;
+      coop.pcState = pc.connectionState || "new";
+      coop.iceState = pc.iceConnectionState || "new";
+      coop.iceGathering = pc.iceGatheringState || "new";
       pc.onconnectionstatechange = () => {
+        coop.pcState = pc.connectionState || "unknown";
         coop.connected = pc.connectionState === "connected";
         if (coop.connected) {
           coop.exchanging = false;
@@ -5528,7 +5557,20 @@
           setCoopStatus(coop.role === "guest" ? "GUEST CODE READY" : "WAIT GUEST CODE");
           return;
         }
-        setCoopStatus(pc.connectionState.toUpperCase());
+        setCoopStatus(pc.connectionState === "failed" ? "FAILED - NETWORK" : pc.connectionState.toUpperCase());
+      };
+      pc.oniceconnectionstatechange = () => {
+        coop.iceState = pc.iceConnectionState || "unknown";
+        if (pc.iceConnectionState === "failed") setCoopStatus("FAILED - NETWORK");
+        else coopRefreshPanel();
+      };
+      pc.onicegatheringstatechange = () => {
+        coop.iceGathering = pc.iceGatheringState || "unknown";
+        coopRefreshPanel();
+      };
+      pc.onicecandidate = () => {
+        coop.localCandidates = coopCountCandidates(pc.localDescription);
+        coopRefreshPanel();
       };
       pc.ondatachannel = (event) => coopAttachChannel(event.channel);
       return pc;
@@ -5566,7 +5608,11 @@
     }
 
     async function coopWaitIce(pc) {
-      if (pc.iceGatheringState === "complete") return;
+      if (pc.iceGatheringState === "complete") {
+        coop.localCandidates = coopCountCandidates(pc.localDescription);
+        coopRefreshPanel();
+        return;
+      }
       await new Promise((resolve) => {
         let settled = false;
         const done = () => {
@@ -5574,7 +5620,9 @@
             settled = true;
             pc.removeEventListener("icegatheringstatechange", done);
             pc.removeEventListener("icecandidate", candidateDone);
-            resolve();
+            coop.localCandidates = coopCountCandidates(pc.localDescription);
+            coopRefreshPanel();
+            setTimeout(resolve, 250);
           }
         };
         const candidateDone = (event) => {
@@ -5582,7 +5630,9 @@
             settled = true;
             pc.removeEventListener("icegatheringstatechange", done);
             pc.removeEventListener("icecandidate", candidateDone);
-            resolve();
+            coop.localCandidates = coopCountCandidates(pc.localDescription);
+            coopRefreshPanel();
+            setTimeout(resolve, 250);
           }
         };
         pc.addEventListener("icegatheringstatechange", done);
@@ -5592,9 +5642,11 @@
             settled = true;
             pc.removeEventListener("icegatheringstatechange", done);
             pc.removeEventListener("icecandidate", candidateDone);
+            coop.localCandidates = coopCountCandidates(pc.localDescription);
+            coopRefreshPanel();
             resolve();
           }
-        }, 8000);
+        }, 12000);
       });
     }
 
@@ -5627,7 +5679,9 @@
         const pc = coopCreatePeer();
         coop.role = "guest";
         coop.exchanging = true;
-        await pc.setRemoteDescription(await coopUnpackSignal(offerText || coopGetRemoteSignal()));
+        const offer = await coopUnpackSignal(offerText || coopGetRemoteSignal());
+        coop.remoteCandidates = coopCountCandidates(offer);
+        await pc.setRemoteDescription(offer);
         await pc.setLocalDescription(await pc.createAnswer());
         await coopWaitIce(pc);
         await coopSetLocalDescriptionSignal(pc.localDescription);
@@ -5643,7 +5697,9 @@
     async function coopAcceptAnswer(answerText) {
       try {
         if (!coop.pc) throw new Error("Host peer missing");
-        await coop.pc.setRemoteDescription(await coopUnpackSignal(answerText || coopGetRemoteSignal()));
+        const answer = await coopUnpackSignal(answerText || coopGetRemoteSignal());
+        coop.remoteCandidates = coopCountCandidates(answer);
+        await coop.pc.setRemoteDescription(answer);
         coop.exchanging = false;
         setCoopStatus("CONNECTING");
       } catch (err) {
@@ -5664,6 +5720,11 @@
       coop.exchanging = false;
       coop.codeView = "remote";
       coop.scannedOfferReady = false;
+      coop.pcState = "new";
+      coop.iceState = "new";
+      coop.iceGathering = "new";
+      coop.localCandidates = 0;
+      coop.remoteCandidates = 0;
       if (coopPanel) {
         const local = document.getElementById("coop-local");
         const remote = document.getElementById("coop-remote");
