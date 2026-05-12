@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.5";
-    const BUILD_TIMESTAMP = "2026-05-12 21:03:23 KST";
+    const BUILD_VERSION = "2.1.6";
+    const BUILD_TIMESTAMP = "2026-05-12 21:08:51 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -5215,6 +5215,43 @@
       coopRefreshPanel();
     }
 
+    function coopToast(text, ok = true) {
+      let toast = document.getElementById("coop-toast");
+      if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "coop-toast";
+        toast.style.cssText = [
+          "position:fixed",
+          "left:50%",
+          "bottom:calc(96px + env(safe-area-inset-bottom, 0px))",
+          "transform:translateX(-50%) translateY(8px)",
+          "z-index:10001",
+          "max-width:calc(100vw - 32px)",
+          "padding:10px 14px",
+          "border-radius:8px",
+          "font:800 13px Arial,sans-serif",
+          "color:#eef6ff",
+          "border:1px solid rgba(170,215,255,.55)",
+          "box-shadow:0 10px 26px rgba(0,0,0,.46)",
+          "pointer-events:none",
+          "opacity:0",
+          "transition:opacity .16s ease, transform .16s ease",
+          "text-align:center"
+        ].join(";");
+        document.body.appendChild(toast);
+      }
+      toast.textContent = text;
+      toast.style.background = ok ? "rgba(18,42,62,.96)" : "rgba(72,26,28,.96)";
+      toast.style.borderColor = ok ? "rgba(130,210,255,.72)" : "rgba(255,130,130,.72)";
+      toast.style.opacity = "1";
+      toast.style.transform = "translateX(-50%) translateY(-4px)";
+      clearTimeout(coopToast.timer);
+      coopToast.timer = setTimeout(() => {
+        toast.style.opacity = "0";
+        toast.style.transform = "translateX(-50%) translateY(8px)";
+      }, 1450);
+    }
+
     function coopSetLocalSignal(text) {
       ensureCoopPanel();
       document.getElementById("coop-local").value = text;
@@ -5303,9 +5340,15 @@
       try {
         await navigator.clipboard.writeText(coopGetLocalSignal());
         setCoopStatus("COPIED");
+        coopToast("CODE COPIED");
       } catch {
-        if (coopCopyTextFallback(coopGetLocalSignal())) setCoopStatus("COPIED");
-        else setCoopStatus("COPY FAIL");
+        if (coopCopyTextFallback(coopGetLocalSignal())) {
+          setCoopStatus("COPIED");
+          coopToast("CODE COPIED");
+        } else {
+          setCoopStatus("COPY FAIL");
+          coopToast("COPY FAILED", false);
+        }
       }
     }
 
@@ -5410,18 +5453,26 @@
         if (!navigator.clipboard || !window.ClipboardItem) throw new Error("Image clipboard unsupported");
         await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
         setCoopStatus("QR COPIED");
+        coopToast("QR COPIED");
       } catch (err) {
         const dataUrl = coopQrCanvasDataUrl();
         if (dataUrl && coopCopyTextFallback(dataUrl)) {
           setCoopStatus("QR DATA COPIED");
+          coopToast("QR DATA COPIED");
           return;
         }
         try {
           await navigator.clipboard.writeText(coopGetLocalSignal());
           setCoopStatus("QR COPY FAIL - SIGNAL COPIED");
+          coopToast("QR FAILED - CODE COPIED");
         } catch {
-          if (coopCopyTextFallback(coopGetLocalSignal())) setCoopStatus("QR COPY FAIL - SIGNAL COPIED");
-          else setCoopStatus("QR COPY FAIL");
+          if (coopCopyTextFallback(coopGetLocalSignal())) {
+            setCoopStatus("QR COPY FAIL - SIGNAL COPIED");
+            coopToast("QR FAILED - CODE COPIED");
+          } else {
+            setCoopStatus("QR COPY FAIL");
+            coopToast("QR COPY FAILED", false);
+          }
         }
       }
     }
