@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.16";
-    const BUILD_TIMESTAMP = "2026-05-13 01:03:20 KST";
+    const BUILD_VERSION = "2.1.17";
+    const BUILD_TIMESTAMP = "2026-05-13 01:23:27 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -5868,7 +5868,7 @@
         coopMapTimer = 0;
         coopStartNetworkPump();
         setCoopStatus("CONNECTED");
-        coopSendNow();
+        coopOnConnected();
         if (coop.role === "host") {
           setTimeout(() => {
             coopSendMap();
@@ -5895,6 +5895,19 @@
           console.warn("Bad coop message", err);
         }
       };
+    }
+
+    function coopOnConnected() {
+      if (coopPanel) coopPanel.style.display = "none";
+      coopToast("NETWORK CONNECTED", true);
+      if (coop.role === "guest") {
+        if (state !== "play") startGame();
+        if (isMobile) initMobileAimCursor();
+        updateCamera(1, mobileAimWorldTarget());
+      }
+      for (let i = 0; i < 8; i++) {
+        setTimeout(() => coopSendNow(), i * 80);
+      }
     }
 
     async function coopWaitIce(pc) {
