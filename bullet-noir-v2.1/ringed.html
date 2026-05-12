@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.8";
-    const BUILD_TIMESTAMP = "2026-05-12 21:27:19 KST";
+    const BUILD_VERSION = "2.1.9";
+    const BUILD_TIMESTAMP = "2026-05-12 21:51:36 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -5139,6 +5139,7 @@
       if (!roleRow || !actionRow || !scanButton || !useButton || !qrButton || !copyRow || !codeLabel || !help || !net) return;
       const hasLocal = !!coopGetLocalSignal();
       const hasRemote = !!coopGetRemoteSignal();
+      const failed = /^FAILED\b/.test(coop.status) || coop.lastError === "PC_FAILED" || coop.lastError === "ICE_FAILED";
       roleRow.style.display = coop.role ? "none" : "grid";
       actionRow.style.display = coop.role ? "grid" : "none";
       scanButton.style.display = coop.role === "guest" && !hasLocal ? "" : "none";
@@ -5151,7 +5152,10 @@
       } else if (coop.role === "host") {
         useButton.textContent = coop.codeView === "local" ? "ENTER GUEST CODE" : "CONNECT";
         qrButton.textContent = "HOST QR";
-        if (coop.codeView === "local") {
+        if (failed) {
+          codeLabel.textContent = "CONNECTION FAILED";
+          help.textContent = hasRemote ? "Guest code was received, but WebRTC could not make a network path. Try RESET, or use a relay/TURN build." : "Connection failed before the guest code was accepted. Try RESET.";
+        } else if (coop.codeView === "local") {
           codeLabel.textContent = "HOST QR - SHOW TO GUEST";
           help.textContent = "Guest scans this. Then enter the guest code here to finish.";
         } else {
@@ -5160,7 +5164,10 @@
         }
       } else {
         scanButton.textContent = (coop.scannedOfferReady || hasRemote) && !hasLocal ? "CONNECT" : "SCAN";
-        if (coop.codeView === "local") {
+        if (failed) {
+          codeLabel.textContent = "CONNECTION FAILED";
+          help.textContent = hasLocal ? "This guest code is valid, but the host and guest could not connect through the network. Try RESET, or use a relay/TURN build." : "Host code was read, but WebRTC could not make a network path. Try RESET.";
+        } else if (coop.codeView === "local") {
           codeLabel.textContent = "GUEST CODE - ENTER ON HOST";
           help.textContent = "Send or type this code into the host PC.";
         } else {
@@ -5170,7 +5177,8 @@
       }
       const types = " / TYPE " + (coop.localCandidateTypes || "-") + ":" + (coop.remoteCandidateTypes || "-");
       const error = coop.lastError ? " / ERR " + coop.lastError : "";
-      net.textContent = "PC " + coop.pcState + " / ICE " + coop.iceState + " / GATHER " + coop.iceGathering + " / CAND " + coop.localCandidates + ":" + coop.remoteCandidates + types + error;
+      const role = "ROLE " + (coop.role || "-") + " / VIEW " + (coop.codeView || "-");
+      net.textContent = role + " / PC " + coop.pcState + " / ICE " + coop.iceState + " / GATHER " + coop.iceGathering + " / CAND " + coop.localCandidates + ":" + coop.remoteCandidates + types + error;
     }
 
     function ensureCoopPanel() {
@@ -5676,7 +5684,7 @@
         }
         if (coop.exchanging && (pc.connectionState === "failed" || pc.connectionState === "disconnected")) {
           coop.lastError = pc.connectionState === "failed" ? "PC_FAILED" : "PC_DISCONNECTED";
-          setCoopStatus(coop.role === "guest" ? "GUEST CODE READY" : "WAIT GUEST CODE");
+          setCoopStatus(pc.connectionState === "failed" ? "FAILED - NETWORK" : "DISCONNECTED");
           return;
         }
         if (pc.connectionState === "failed") coop.lastError = "PC_FAILED";
