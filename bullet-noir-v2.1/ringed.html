@@ -47,6 +47,7 @@
   <canvas id="game"></canvas>
   <div id="loading">Loading SANG SUB...</div>
 
+  <script src="qrcode-generator.js"></script>
   <script>
     const canvas = document.getElementById("game");
     const ctx = canvas.getContext("2d");
@@ -5027,6 +5028,7 @@
         '<label style="display:block;margin:6px 0 3px">내 신호 복사</label>' +
         '<textarea id="coop-local" readonly style="width:100%;height:94px;box-sizing:border-box;background:#101722;color:#dcecff;border:1px solid #33485e"></textarea>' +
         '<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><button id="coop-copy" type="button">COPY</button><button id="coop-qr-toggle" type="button">QR</button><span id="coop-qr-note" style="color:#b9c5d0">긴 신호는 QR이 안 나올 수 있음</span></div>' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><button id="coop-copy-qr" type="button">COPY QR</button><span style="color:#b9c5d0">QR is generated locally.</span></div>' +
         '<div id="coop-qr-box" style="display:none;margin-top:8px;padding:8px;background:#fff;width:max-content;max-width:100%"><img id="coop-qr-img" alt="coop qr" style="display:block;width:180px;height:180px"></div>' +
         '<label style="display:block;margin:8px 0 3px">상대 신호 붙여넣기</label>' +
         '<textarea id="coop-remote" style="width:100%;height:94px;box-sizing:border-box;background:#101722;color:#dcecff;border:1px solid #33485e"></textarea>' +
@@ -5046,6 +5048,7 @@
       document.getElementById("coop-disconnect").onclick = () => coopDisconnect();
       document.getElementById("coop-copy").onclick = () => coopCopyLocalSignal();
       document.getElementById("coop-qr-toggle").onclick = () => coopToggleQr();
+      document.getElementById("coop-copy-qr").onclick = () => coopCopyQrImage();
     }
 
     function coopSetLocalSignal(text) {
@@ -5074,7 +5077,27 @@
         await navigator.clipboard.writeText(coopGetLocalSignal());
         setCoopStatus("COPIED");
       } catch {
-        setCoopStatus("COPY FAIL");
+        if (coopCopyTextFallback(coopGetLocalSignal())) setCoopStatus("COPIED");
+        else setCoopStatus("COPY FAIL");
+      }
+    }
+
+    function coopCopyTextFallback(text) {
+      try {
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "readonly");
+        area.style.position = "fixed";
+        area.style.left = "-9999px";
+        area.style.top = "0";
+        document.body.appendChild(area);
+        area.focus();
+        area.select();
+        const ok = document.execCommand && document.execCommand("copy");
+        document.body.removeChild(area);
+        return !!ok;
+      } catch {
+        return false;
       }
     }
 
@@ -5100,8 +5123,45 @@
         note.textContent = "신호가 너무 길어 QR 대신 COPY 사용";
         return;
       }
-      img.src = "https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=" + encodeURIComponent(signal);
+      try {
+        const qr = qrcode(0, "M");
+        qr.addData(signal);
+        qr.make();
+        img.src = qr.createDataURL(6, 8);
+        note.textContent = "QR READY - COPY QR";
+        return;
+      } catch (err) {
+        img.removeAttribute("src");
+        note.textContent = "QR FAIL - COPY SIGNAL";
+        console.error(err);
+        return;
+      }
       note.textContent = "상대 폰으로 스캔 후 붙여넣기";
+    }
+
+    async function coopCopyQrImage() {
+      try {
+        updateCoopQr();
+        const img = document.getElementById("coop-qr-img");
+        if (!img || !img.src) throw new Error("QR missing");
+        const blob = await (await fetch(img.src)).blob();
+        if (!navigator.clipboard || !window.ClipboardItem) throw new Error("Image clipboard unsupported");
+        await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+        setCoopStatus("QR COPIED");
+      } catch (err) {
+        const img = document.getElementById("coop-qr-img");
+        if (img && img.src && coopCopyTextFallback(img.src)) {
+          setCoopStatus("QR DATA COPIED");
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(coopGetLocalSignal());
+          setCoopStatus("QR COPY FAIL - SIGNAL COPIED");
+        } catch {
+          if (coopCopyTextFallback(coopGetLocalSignal())) setCoopStatus("QR COPY FAIL - SIGNAL COPIED");
+          else setCoopStatus("QR COPY FAIL");
+        }
+      }
     }
 
     function coopCreatePeer() {
