@@ -110,6 +110,17 @@
     let voiceCommandStatusTimer = 0;
     let voiceCommandFlash = 0;
     let raidAlarmTimer = 0;
+    let coopPanel = null;
+    let coopSendTimer = 0;
+    const coop = {
+      pc: null,
+      channel: null,
+      role: "",
+      status: "OFFLINE",
+      remote: null,
+      connected: false
+    };
+    window.coop = coop;
     const isMobile = detectMobileDevice();
     const mobileControls = {
       moveId: null,
@@ -273,6 +284,7 @@
       }
       if (state === "play" && handleGameMenuButtonClick(mouse.x, mouse.y)) return;
       if (state === "play" && handleSpecialForcesToggleClick(mouse.x, mouse.y)) return;
+      if (state === "play" && handleCoopButtonClick(mouse.x, mouse.y)) return;
       if (handleCameraButtonClick(mouse.x, mouse.y)) return;
       if (event.button === 2) mouse.right = true;
       else mouse.down = true;
@@ -1758,7 +1770,6 @@
       bombCooldown = 0.72;
       bombCount--;
       if (selectedWeapon === "bomb" && bombCount <= 0) selectedWeapon = "rifle";
-      player.throwAnim = 0.62;
       const dx = target.x - player.x;
       const dy = target.y - player.y;
       const d = Math.hypot(dx, dy) || 1;
@@ -2060,7 +2071,6 @@
     function update(dt) {
       voiceCommandStatusTimer = Math.max(0, voiceCommandStatusTimer - dt);
       voiceCommandFlash = Math.max(0, voiceCommandFlash - dt);
-      player.throwAnim = Math.max(0, (player.throwAnim || 0) - dt);
       if (state === "intro") {
         if (!introStarted) return;
         introTimer += dt;
@@ -2083,6 +2093,7 @@
         return;
       }
 
+      updateCoop(dt);
       shootCooldown -= dt;
       bombCooldown -= dt;
       if (rifleReload > 0) {
@@ -2402,6 +2413,10 @@
         maxLife: 0.08
       });
       damageBarricadesInCone(sx, sy, dx, dy, enemy.fast ? 188 : 210, enemy.fast ? 34 : 40, 0.18, enemy.fast ? 1 : 2);
+      const barrierHit = raycastEnemyShot(sx, sy, dx, dy, Math.hypot(player.x - sx, player.y - sy));
+      if (barrierHit.prop && barrierHit.prop.type === "barricade") {
+        return;
+      }
       if (player.invuln <= 0) {
         player.hp -= enemy.fast ? 8 : 12;
         player.invuln = 0.14;
@@ -3486,6 +3501,7 @@
       for (const e of enemies) drawEnemy(e);
       drawSpeechBubbles();
       drawPlayer();
+      drawRemoteCoopPeer();
       drawDashBursts();
       drawParticles();
       drawOriginalFlashlightLayer();
@@ -3968,189 +3984,10 @@
     function drawPlayer() {
       ctx.save();
       ctx.translate(player.x, player.y);
-      ctx.rotate(player.angle + Math.PI / 2);
+      ctx.rotate(player.angle);
       if (player.invuln > 0) ctx.globalAlpha = 0.65 + Math.sin(performance.now() * 0.04) * 0.25;
       const visualWeapon = selectedWeapon === "flamer" ? "flamer" : "shooter";
-      drawRoundBipedTopview({
-        r: 24,
-        moving: !!player.isMoving,
-        throwing: player.throwAnim || 0,
-        weaponKind: visualWeapon,
-        hasGun: selectedWeapon !== "bomb" && !(player.throwAnim > 0)
-      });
-      ctx.restore();
-    }
-
-    function drawRoundBipedTopview(options = {}) {
-      const r = options.r || 24;
-      const moving = !!options.moving;
-      const throwing = Math.max(0, options.throwing || 0);
-      const stride = moving ? Math.sin(performance.now() * 0.016) : Math.sin(performance.now() * 0.004) * 0.16;
-      const throwT = throwing > 0 ? 1 - clamp(throwing / 0.62, 0, 1) : 1;
-      const throwArc = throwing > 0 ? Math.sin(throwT * Math.PI) : 0;
-      const throwWind = throwing > 0 ? Math.sin(throwT * Math.PI * 0.8) : 0;
-      const bodyR = r * 1.28;
-      const bob = moving ? Math.abs(stride) * -1.4 : Math.sin(performance.now() * 0.004) * 0.5;
-
-      ctx.save();
-      ctx.translate(0, bob);
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-
-      ctx.globalAlpha = 0.28;
-      ctx.fillStyle = "#000";
-      ctx.beginPath();
-      ctx.ellipse(3, bodyR * 0.42, bodyR * 0.92, bodyR * 0.38, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-
-      drawRoundBipedLeg(-1, stride, bodyR);
-      drawRoundBipedLeg(1, -stride, bodyR);
-
-      ctx.fillStyle = "rgba(250,250,252,0.92)";
-      ctx.beginPath();
-      ctx.arc(0, 0, bodyR + 3.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "rgba(6,7,9,0.98)";
-      ctx.beginPath();
-      ctx.arc(0, 0, bodyR + 1, 0, Math.PI * 2);
-      ctx.fill();
-      const bodyGradient = ctx.createRadialGradient(-bodyR * 0.28, -bodyR * 0.34, 3, 0, 0, bodyR);
-      bodyGradient.addColorStop(0, "rgba(192, 102, 206, 1)");
-      bodyGradient.addColorStop(0.52, "rgba(162, 75, 177, 1)");
-      bodyGradient.addColorStop(1, "rgba(126, 48, 145, 1)");
-      ctx.fillStyle = bodyGradient;
-      ctx.beginPath();
-      ctx.arc(0, 0, bodyR, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = "rgba(235,235,236,0.9)";
-      ctx.beginPath();
-      ctx.arc(-bodyR * 0.33, -bodyR * 0.3, bodyR * 0.22, 0, Math.PI * 2);
-      ctx.fill();
-
-      drawRoundBipedEye(-bodyR * 0.34, -bodyR * 0.5, bodyR);
-      drawRoundBipedEye(bodyR * 0.18, -bodyR * 0.56, bodyR);
-
-      drawRoundBipedArm(-1, stride, bodyR, 0, false);
-      drawRoundBipedArm(1, stride, bodyR, throwArc, throwing > 0);
-
-      if (options.hasGun) {
-        drawRoundBipedWeapon(bodyR, options.weaponKind || "shooter");
-      } else if (throwing > 0) {
-        const hand = roundBipedThrowHand(bodyR, throwArc, throwWind);
-        ctx.save();
-        ctx.translate(hand.x, hand.y);
-        ctx.rotate(throwT * Math.PI * 5);
-        ctx.scale(0.62, 0.62);
-        drawBombSprite();
-        ctx.restore();
-      }
-
-      ctx.restore();
-    }
-
-    function drawRoundBipedLeg(side, stride, bodyR) {
-      const hipX = side * bodyR * 0.33;
-      const hipY = bodyR * 0.58;
-      const swing = stride * 9;
-      const footX = side * (bodyR * 0.42 + swing * 0.34);
-      const footY = bodyR * 0.93 + Math.max(0, Math.abs(stride)) * 4 + Math.max(0, side * stride) * 5;
-      ctx.strokeStyle = "rgba(245,248,250,0.78)";
-      ctx.lineWidth = 8;
-      ctx.beginPath();
-      ctx.moveTo(hipX, hipY);
-      ctx.quadraticCurveTo(side * bodyR * 0.5, bodyR * 0.76, footX, footY);
-      ctx.stroke();
-      ctx.strokeStyle = "rgba(4,5,7,0.98)";
-      ctx.lineWidth = 5.2;
-      ctx.beginPath();
-      ctx.moveTo(hipX, hipY);
-      ctx.quadraticCurveTo(side * bodyR * 0.5, bodyR * 0.76, footX, footY);
-      ctx.stroke();
-      ctx.fillStyle = "rgba(3,4,6,0.98)";
-      ctx.beginPath();
-      ctx.ellipse(footX, footY + 2, 4.8, 7.4, side * stride * 0.18, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    function drawRoundBipedEye(x, y, bodyR) {
-      ctx.fillStyle = "rgba(5,6,8,0.98)";
-      ctx.beginPath();
-      ctx.arc(x, y, bodyR * 0.22, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "rgba(255,63,75,0.96)";
-      ctx.beginPath();
-      ctx.arc(x, y, bodyR * 0.13, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    function drawRoundBipedArm(side, stride, bodyR, throwArc = 0, isThrowArm = false) {
-      let shoulderX = side * bodyR * 0.74;
-      let shoulderY = -bodyR * 0.24;
-      let elbowX = side * (bodyR * 1.08 + stride * 2.8);
-      let elbowY = -bodyR * 0.72;
-      let handX = side * bodyR * 0.35;
-      let handY = -bodyR * 1.1;
-      if (isThrowArm) {
-        elbowX = bodyR * (1.18 - throwArc * 1.45);
-        elbowY = -bodyR * (0.14 + throwArc * 1.42);
-        const hand = roundBipedThrowHand(bodyR, throwArc, throwArc);
-        handX = hand.x;
-        handY = hand.y;
-      }
-      ctx.strokeStyle = "rgba(250,252,255,0.86)";
-      ctx.lineWidth = 10;
-      ctx.beginPath();
-      ctx.moveTo(shoulderX, shoulderY);
-      ctx.quadraticCurveTo(elbowX, elbowY, handX, handY);
-      ctx.stroke();
-      ctx.strokeStyle = "rgba(4,5,7,0.98)";
-      ctx.lineWidth = 6.6;
-      ctx.beginPath();
-      ctx.moveTo(shoulderX, shoulderY);
-      ctx.quadraticCurveTo(elbowX, elbowY, handX, handY);
-      ctx.stroke();
-      ctx.fillStyle = "rgba(232,234,236,0.96)";
-      ctx.beginPath();
-      ctx.arc(handX, handY, 4.8, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = "rgba(85,190,255,0.55)";
-      ctx.lineWidth = 2;
-      if (!isThrowArm && Math.abs(stride) > 0.52) {
-        ctx.beginPath();
-        ctx.arc(side * bodyR * 0.86, -bodyR * 0.58, bodyR * 0.54, side < 0 ? -2.4 : -0.75, side < 0 ? -1.28 : 0.35);
-        ctx.stroke();
-      }
-    }
-
-    function roundBipedThrowHand(bodyR, throwArc, throwWind) {
-      return {
-        x: bodyR * (0.94 - throwArc * 0.86),
-        y: -bodyR * (0.36 + throwArc * 1.12 + throwWind * 0.08)
-      };
-    }
-
-    function drawRoundBipedWeapon(bodyR, weaponKind) {
-      ctx.save();
-      ctx.strokeStyle = "rgba(245,248,250,0.92)";
-      ctx.lineWidth = weaponKind === "flamer" ? 9 : 7;
-      ctx.beginPath();
-      ctx.moveTo(0, -bodyR * 0.84);
-      ctx.lineTo(0, -bodyR * 1.72);
-      ctx.stroke();
-      ctx.strokeStyle = weaponKind === "flamer" ? "rgba(70,74,78,0.98)" : "rgba(96,104,112,0.98)";
-      ctx.lineWidth = weaponKind === "flamer" ? 5 : 3.8;
-      ctx.beginPath();
-      ctx.moveTo(0, -bodyR * 0.84);
-      ctx.lineTo(0, -bodyR * 1.72);
-      ctx.stroke();
-      ctx.fillStyle = "rgba(38,42,46,0.98)";
-      ctx.fillRect(-bodyR * 0.12, -bodyR * 1.22, bodyR * 0.24, bodyR * 0.32);
-      if (weaponKind === "flamer") {
-        ctx.fillStyle = "rgba(200,86,38,0.95)";
-        ctx.fillRect(-bodyR * 0.2, -bodyR * 1.05, bodyR * 0.4, bodyR * 0.16);
-      }
+      drawTacticalHuman(24, true, selectedWeapon !== "bomb", visualWeapon);
       ctx.restore();
     }
 
@@ -5052,6 +4889,7 @@
       ctx.fillText("E Weapon / Q Bomb", 180, 92);
       drawGameMenuButton();
       drawSpecialForcesToggle();
+      drawCoopButton();
       drawCameraButtons();
     }
 
@@ -5115,6 +4953,338 @@
         ctx.font = "700 10px Arial";
         ctx.fillText(voiceCommandStatus, rect.x + rect.w + 10, rect.y + rect.h / 2 + 1);
       }
+      ctx.restore();
+    }
+
+    function coopButtonRect() {
+      return { x: 30, y: 164, w: 186, h: 30 };
+    }
+
+    function handleCoopButtonClick(x, y) {
+      const rect = coopButtonRect();
+      if (x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h) {
+        ensureCoopPanel();
+        coopPanel.style.display = coopPanel.style.display === "none" ? "block" : "none";
+        return true;
+      }
+      return false;
+    }
+
+    function drawCoopButton() {
+      const rect = coopButtonRect();
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,0.42)";
+      ctx.strokeStyle = coop.connected ? "rgba(110,190,255,0.88)" : "rgba(255,255,255,0.24)";
+      ctx.lineWidth = 1.4;
+      roundRect(rect.x, rect.y, rect.w, rect.h, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = coop.connected ? "#9ed8ff" : "#e7decf";
+      ctx.font = "700 12px Arial";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText("WEBRTC COOP", rect.x + 12, rect.y + rect.h / 2 + 1);
+      ctx.fillStyle = coop.connected ? "#9ed8ff" : "#9aa1aa";
+      ctx.textAlign = "right";
+      ctx.fillText(coop.connected ? "LINK" : coop.status, rect.x + rect.w - 10, rect.y + rect.h / 2 + 1);
+      ctx.restore();
+    }
+
+    function setCoopStatus(text) {
+      coop.status = text;
+      const node = document.getElementById("coop-status");
+      if (node) node.textContent = text;
+    }
+
+    function ensureCoopPanel() {
+      if (coopPanel) return;
+      coopPanel = document.createElement("div");
+      coopPanel.style.cssText = [
+        "position:fixed",
+        "left:12px",
+        "top:204px",
+        "z-index:9999",
+        "width:min(420px,calc(100vw - 24px))",
+        "padding:12px",
+        "box-sizing:border-box",
+        "background:rgba(8,10,14,.94)",
+        "border:1px solid rgba(150,200,255,.38)",
+        "border-radius:8px",
+        "color:#eef6ff",
+        "font:12px Arial,sans-serif",
+        "box-shadow:0 12px 30px rgba(0,0,0,.46)",
+        "pointer-events:auto"
+      ].join(";");
+      coopPanel.innerHTML =
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">' +
+        '<strong>WEBRTC COOP</strong><button id="coop-close" type="button">X</button></div>' +
+        '<div id="coop-status" style="margin-bottom:8px;color:#9ed8ff">OFFLINE</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">' +
+        '<button id="coop-host" type="button">HOST OFFER</button>' +
+        '<button id="coop-join" type="button">JOIN OFFER</button>' +
+        '<button id="coop-accept" type="button">HOST ACCEPT ANSWER</button>' +
+        '<button id="coop-disconnect" type="button">DISCONNECT</button></div>' +
+        '<label style="display:block;margin:6px 0 3px">내 신호 복사</label>' +
+        '<textarea id="coop-local" readonly style="width:100%;height:94px;box-sizing:border-box;background:#101722;color:#dcecff;border:1px solid #33485e"></textarea>' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><button id="coop-copy" type="button">COPY</button><button id="coop-qr-toggle" type="button">QR</button><span id="coop-qr-note" style="color:#b9c5d0">긴 신호는 QR이 안 나올 수 있음</span></div>' +
+        '<div id="coop-qr-box" style="display:none;margin-top:8px;padding:8px;background:#fff;width:max-content;max-width:100%"><img id="coop-qr-img" alt="coop qr" style="display:block;width:180px;height:180px"></div>' +
+        '<label style="display:block;margin:8px 0 3px">상대 신호 붙여넣기</label>' +
+        '<textarea id="coop-remote" style="width:100%;height:94px;box-sizing:border-box;background:#101722;color:#dcecff;border:1px solid #33485e"></textarea>' +
+        '<div style="margin-top:8px;color:#b9c5d0;line-height:1.35">호스트: HOST OFFER -> 복사 전달. 게스트: 붙여넣고 JOIN OFFER -> answer 전달. 호스트: answer 붙여넣고 HOST ACCEPT ANSWER.</div>';
+      document.body.appendChild(coopPanel);
+      for (const eventName of ["mousedown", "mouseup", "mousemove", "click", "touchstart", "touchmove", "touchend", "pointerdown", "pointerup"]) {
+        coopPanel.addEventListener(eventName, (event) => {
+          event.stopPropagation();
+        }, { passive: false });
+      }
+      const buttonStyle = "background:#162234;color:#eef6ff;border:1px solid #405a72;border-radius:5px;padding:7px 6px;font-weight:700";
+      coopPanel.querySelectorAll("button").forEach((button) => button.style.cssText = button.id === "coop-close" ? buttonStyle + ";padding:3px 8px" : buttonStyle);
+      document.getElementById("coop-close").onclick = () => coopPanel.style.display = "none";
+      document.getElementById("coop-host").onclick = () => coopStartHost();
+      document.getElementById("coop-join").onclick = () => coopStartJoiner(document.getElementById("coop-remote").value);
+      document.getElementById("coop-accept").onclick = () => coopAcceptAnswer(document.getElementById("coop-remote").value);
+      document.getElementById("coop-disconnect").onclick = () => coopDisconnect();
+      document.getElementById("coop-copy").onclick = () => coopCopyLocalSignal();
+      document.getElementById("coop-qr-toggle").onclick = () => coopToggleQr();
+    }
+
+    function coopSetLocalSignal(text) {
+      ensureCoopPanel();
+      document.getElementById("coop-local").value = text;
+      updateCoopQr();
+    }
+
+    function coopGetLocalSignal() {
+      const node = document.getElementById("coop-local");
+      return node ? node.value : "";
+    }
+
+    function coopGetRemoteSignal() {
+      const node = document.getElementById("coop-remote");
+      return node ? node.value : "";
+    }
+
+    function coopApplyRemoteSignal(text) {
+      ensureCoopPanel();
+      document.getElementById("coop-remote").value = text;
+    }
+
+    async function coopCopyLocalSignal() {
+      try {
+        await navigator.clipboard.writeText(coopGetLocalSignal());
+        setCoopStatus("COPIED");
+      } catch {
+        setCoopStatus("COPY FAIL");
+      }
+    }
+
+    function coopToggleQr() {
+      ensureCoopPanel();
+      const box = document.getElementById("coop-qr-box");
+      box.style.display = box.style.display === "none" ? "block" : "none";
+      updateCoopQr();
+    }
+
+    function updateCoopQr() {
+      const img = document.getElementById("coop-qr-img");
+      const note = document.getElementById("coop-qr-note");
+      if (!img || !note) return;
+      const signal = coopGetLocalSignal();
+      if (!signal) {
+        img.removeAttribute("src");
+        note.textContent = "먼저 offer/answer 생성";
+        return;
+      }
+      if (signal.length > 2950) {
+        img.removeAttribute("src");
+        note.textContent = "신호가 너무 길어 QR 대신 COPY 사용";
+        return;
+      }
+      img.src = "https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=" + encodeURIComponent(signal);
+      note.textContent = "상대 폰으로 스캔 후 붙여넣기";
+    }
+
+    function coopCreatePeer() {
+      if (!window.RTCPeerConnection) throw new Error("WebRTC unsupported");
+      coopDisconnect(false);
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+      });
+      coop.pc = pc;
+      pc.onconnectionstatechange = () => {
+        coop.connected = pc.connectionState === "connected";
+        setCoopStatus(coop.connected ? "CONNECTED" : pc.connectionState.toUpperCase());
+      };
+      pc.ondatachannel = (event) => coopAttachChannel(event.channel);
+      return pc;
+    }
+
+    function coopAttachChannel(channel) {
+      coop.channel = channel;
+      channel.onopen = () => {
+        coop.connected = true;
+        setCoopStatus("CONNECTED");
+        coopSendNow();
+      };
+      channel.onclose = () => {
+        coop.connected = false;
+        setCoopStatus("CLOSED");
+      };
+      channel.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.t === "state") {
+            coop.remote = {
+              x: Number(data.x) || 0,
+              y: Number(data.y) || 0,
+              angle: Number(data.angle) || 0,
+              hp: Math.max(0, Math.min(100, Number(data.hp) || 0)),
+              weapon: data.weapon || "rifle",
+              moving: !!data.moving,
+              last: performance.now()
+            };
+          }
+        } catch (err) {
+          console.warn("Bad coop message", err);
+        }
+      };
+    }
+
+    async function coopWaitIce(pc) {
+      if (pc.iceGatheringState === "complete") return;
+      await new Promise((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (!settled && pc.iceGatheringState === "complete") {
+            settled = true;
+            pc.removeEventListener("icegatheringstatechange", done);
+            pc.removeEventListener("icecandidate", candidateDone);
+            resolve();
+          }
+        };
+        const candidateDone = (event) => {
+          if (!settled && !event.candidate) {
+            settled = true;
+            pc.removeEventListener("icegatheringstatechange", done);
+            pc.removeEventListener("icecandidate", candidateDone);
+            resolve();
+          }
+        };
+        pc.addEventListener("icegatheringstatechange", done);
+        pc.addEventListener("icecandidate", candidateDone);
+        setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            pc.removeEventListener("icegatheringstatechange", done);
+            pc.removeEventListener("icecandidate", candidateDone);
+            resolve();
+          }
+        }, 8000);
+      });
+    }
+
+    async function coopStartHost() {
+      try {
+        ensureCoopPanel();
+        setCoopStatus("HOSTING");
+        const pc = coopCreatePeer();
+        coop.role = "host";
+        coopAttachChannel(pc.createDataChannel("sang-sub-coop"));
+        await pc.setLocalDescription(await pc.createOffer());
+        await coopWaitIce(pc);
+        coopSetLocalSignal(JSON.stringify(pc.localDescription));
+        setCoopStatus("SEND OFFER");
+      } catch (err) {
+        setCoopStatus("ERROR");
+        console.error(err);
+      }
+    }
+
+    async function coopStartJoiner(offerText) {
+      try {
+        ensureCoopPanel();
+        setCoopStatus("JOINING");
+        const pc = coopCreatePeer();
+        coop.role = "guest";
+        await pc.setRemoteDescription(JSON.parse(offerText || coopGetRemoteSignal()));
+        await pc.setLocalDescription(await pc.createAnswer());
+        await coopWaitIce(pc);
+        coopSetLocalSignal(JSON.stringify(pc.localDescription));
+        setCoopStatus("SEND ANSWER");
+      } catch (err) {
+        setCoopStatus("ERROR");
+        console.error(err);
+      }
+    }
+
+    async function coopAcceptAnswer(answerText) {
+      try {
+        if (!coop.pc) throw new Error("Host peer missing");
+        await coop.pc.setRemoteDescription(JSON.parse(answerText || coopGetRemoteSignal()));
+        setCoopStatus("CONNECTING");
+      } catch (err) {
+        setCoopStatus("ERROR");
+        console.error(err);
+      }
+    }
+
+    function coopDisconnect(updateStatus = true) {
+      if (coop.channel) coop.channel.close();
+      if (coop.pc) coop.pc.close();
+      coop.pc = null;
+      coop.channel = null;
+      coop.role = "";
+      coop.remote = null;
+      coop.connected = false;
+      if (updateStatus) setCoopStatus("OFFLINE");
+    }
+
+    function coopSendNow() {
+      if (!coop.channel || coop.channel.readyState !== "open") return false;
+      coop.channel.send(JSON.stringify({
+        t: "state",
+        x: player.x,
+        y: player.y,
+        angle: player.angle,
+        hp: player.hp,
+        weapon: selectedWeapon,
+        moving: player.isMoving
+      }));
+      return true;
+    }
+
+    function updateCoop(dt) {
+      coopSendTimer -= dt;
+      if (coopSendTimer <= 0) {
+        coopSendTimer = 1 / 12;
+        coopSendNow();
+      }
+      if (coop.remote && performance.now() - coop.remote.last > 3200) {
+        coop.remote = null;
+      }
+    }
+
+    function drawRemoteCoopPeer() {
+      if (!coop.remote) return;
+      ctx.save();
+      ctx.globalAlpha = 0.86;
+      ctx.translate(coop.remote.x, coop.remote.y);
+      ctx.rotate(coop.remote.angle);
+      ctx.shadowColor = "rgba(80,180,255,0.65)";
+      ctx.shadowBlur = 16;
+      drawTacticalHuman(23, false, coop.remote.weapon !== "bomb", coop.remote.weapon === "flamer" ? "flamer" : "shooter");
+      ctx.restore();
+      ctx.save();
+      ctx.strokeStyle = "rgba(100,200,255,0.9)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(coop.remote.x, coop.remote.y, 31, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = "#9ed8ff";
+      ctx.font = "800 11px Arial";
+      ctx.textAlign = "center";
+      ctx.fillText("ALLY", coop.remote.x, coop.remote.y - 36);
+      bar(coop.remote.x - 24, coop.remote.y - 31, 48, 5, coop.remote.hp / 100, "#56b7ff", "#123044");
       ctx.restore();
     }
 
@@ -5434,6 +5604,7 @@
       if (state !== "play") continue;
       if (handleGameMenuButtonClick(p.x, p.y)) return;
       if (handleSpecialForcesToggleClick(p.x, p.y)) return;
+      if (handleCoopButtonClick(p.x, p.y)) return;
       const action = mobileActionAt(p.x, p.y);
         if (action === "weapon") {
           mobileControls.weaponTouchId = touch.identifier;
@@ -5577,14 +5748,12 @@
       mobileControls.aimKnobY = ay;
       const dirX = Math.abs(dx) + Math.abs(dy) < 8 ? Math.cos(player.angle || 0) : dx / d;
       const dirY = Math.abs(dx) + Math.abs(dy) < 8 ? Math.sin(player.angle || 0) : dy / d;
-      if (!mobileControls.aimScreenX && !mobileControls.aimScreenY) {
-        initMobileAimCursorFromDirection(dirX, dirY);
-      } else if (hadTouch) {
-        const sensitivity = 2.15;
-        mobileControls.aimScreenX = clamp(mobileControls.aimScreenX + dragX * sensitivity, 18, width - 18);
-        mobileControls.aimScreenY = clamp(mobileControls.aimScreenY + dragY * sensitivity, 18, height - 18);
-        syncMobileAimWorld();
-      }
+      const distance = Math.min(width, height) * 0.36;
+      const px = screenX(player.x);
+      const py = screenY(player.y);
+      mobileControls.aimScreenX = clamp(px + dirX * distance, 18, width - 18);
+      mobileControls.aimScreenY = clamp(py + dirY * distance, 18, height - 18);
+      syncMobileAimWorld();
       mobileControls.aimTouchX = x;
       mobileControls.aimTouchY = y;
     }
@@ -6368,10 +6537,12 @@
         const mobileAimUnaffectedByMoveStick =
           Math.abs(mobileControls.aimScreenX - lockedAimX) < 0.01 &&
           Math.abs(mobileControls.aimScreenY - lockedAimY) < 0.01;
-        updateMobileAttackStick(1060, 585, false);
-        const mobileAimDragUsesTouchDelta =
-          Math.abs(mobileControls.aimScreenX - (lockedAimX + 20 * 2.15)) < 0.01 &&
-          Math.abs(mobileControls.aimScreenY - (lockedAimY + 15 * 2.15)) < 0.01;
+        const attackStickForInstantAim = mobileButtonRects().attack;
+        updateMobileAttackStick(attackStickForInstantAim.x, attackStickForInstantAim.y - attackStickForInstantAim.r, true);
+        const topAimY = mobileControls.aimScreenY;
+        updateMobileAttackStick(attackStickForInstantAim.x, attackStickForInstantAim.y + attackStickForInstantAim.r, false);
+        const mobileAimJoystickRetargetsInstantly =
+          mobileControls.aimScreenY > topAimY + Math.min(width, height) * 0.55;
         const draggedAimX = mobileControls.aimScreenX;
         const draggedAimY = mobileControls.aimScreenY;
         updateMobileStick(180, height - 150);
@@ -6467,7 +6638,7 @@
           mobileSpecialToggleWorks,
           mobileAimCursorActsLikeMouse,
           mobileAimUnaffectedByMoveStick,
-          mobileAimDragUsesTouchDelta,
+          mobileAimJoystickRetargetsInstantly,
           mobileMoveStickDoesNotMoveCursor,
           mobileAimRetargetsAfterCameraMove,
           synthSfxFallbackAvailable,
