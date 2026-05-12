@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.8";
-    const BUILD_TIMESTAMP = "2026-05-12 21:27:19 KST";
+    const BUILD_VERSION = "2.1.14";
+    const BUILD_TIMESTAMP = "2026-05-13 00:36:18 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -117,6 +117,10 @@
     let raidAlarmTimer = 0;
     let coopPanel = null;
     let coopSendTimer = 0;
+    let coopWorldTimer = 0;
+    let coopMapTimer = 0;
+    let coopPumpHandle = 0;
+    let coopPumpLast = 0;
     let coopScanStream = null;
     let coopScanFrame = 0;
     let coopPanelPollTimer = 0;
@@ -137,6 +141,12 @@
       remoteCandidates: 0,
       localCandidateTypes: "",
       remoteCandidateTypes: "",
+      relayMode: false,
+      busy: false,
+      busyText: "",
+      worldSeq: 0,
+      mapSeq: 0,
+      worldRecvAt: 0,
       lastError: ""
     };
     window.coop = coop;
@@ -554,13 +564,15 @@
         if (params.get("mobile") === "1") return true;
         if (params.get("mobile") === "0") return false;
       } catch (error) {}
-      const touchPoints = navigator.maxTouchPoints || navigator.msMaxTouchPoints || 0;
-      if (touchPoints <= 0) return false;
       const ua = navigator.userAgent || "";
       const mobileUa = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(ua);
-      const compactTouch = Math.min(window.innerWidth || 9999, window.innerHeight || 9999) <= 820;
+      if (mobileUa) return true;
+      const touchPoints = navigator.maxTouchPoints || navigator.msMaxTouchPoints || 0;
+      const hasTouch = touchPoints > 0 || "ontouchstart" in window;
+      if (!hasTouch) return false;
+      const compactTouch = Math.min(window.innerWidth || 9999, window.innerHeight || 9999) <= 920;
       const coarse = !window.matchMedia || window.matchMedia("(hover: none) and (pointer: coarse)").matches;
-      return mobileUa && compactTouch && coarse;
+      return compactTouch && coarse;
     }
 
     function makeAudio(src, volume) {
@@ -2197,8 +2209,26 @@
         player.angle = Math.atan2(aimTarget.y - player.y, aimTarget.x - player.x);
       }
       updateAimRay(aimTarget);
-      if (mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice")) fire();
-      if (mouse.right || keys.has("KeyQ")) throwBomb(aimTarget);
+      if (!coopIsHostWorldClient()) {
+        if (mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice")) fire();
+        if (mouse.right || keys.has("KeyQ")) throwBomb(aimTarget);
+      }
+
+      if (coopIsHostWorldClient()) {
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          p.life -= dt;
+          p.vx *= Math.pow(0.04, dt);
+          p.vy *= Math.pow(0.04, dt);
+          if (p.life <= 0) particles.splice(i, 1);
+        }
+        for (let i = enemyTracers.length - 1; i >= 0; i--) enemyTracers[i].life = Math.max(0, enemyTracers[i].life - dt);
+        for (let i = flameBursts.length - 1; i >= 0; i--) flameBursts[i].life = Math.max(0, flameBursts[i].life - dt);
+        for (let i = iceStorms.length - 1; i >= 0; i--) iceStorms[i].life = Math.max(0, iceStorms[i].life - dt);
+        return;
+      }
 
       for (let i = bullets.length - 1; i >= 0; i--) {
         const b = bullets[i];
@@ -5043,11 +5073,37 @@
       ctx.restore();
     }
 
+    function coopStatusText() {
+      return coop.busy ? coop.busyText + " 진행중..." : coop.status;
+    }
+
+    function coopRenderStatus() {
+      const node = document.getElementById("coop-status");
+      if (node) node.textContent = coopStatusText();
+    }
+
     function setCoopStatus(text) {
       coop.status = text;
-      const node = document.getElementById("coop-status");
-      if (node) node.textContent = text;
+      coopRenderStatus();
       coopRefreshPanel();
+    }
+
+    function coopSetBusy(text) {
+      coop.busy = !!text;
+      coop.busyText = text || "";
+      coopRenderStatus();
+      coopRefreshPanel();
+    }
+
+    async function coopRunBusy(label, task) {
+      if (coop.busy) return false;
+      coopSetBusy(label);
+      try {
+        await task();
+        return true;
+      } finally {
+        coopSetBusy("");
+      }
     }
 
     function coopChooseHost() {
@@ -5055,11 +5111,12 @@
       coop.codeView = "local";
       coop.scannedOfferReady = false;
       coopRefreshPanel();
-      coopStartHost();
+      return coopStartHost();
     }
 
     function coopChooseGuest() {
       coopDisconnect(false);
+      coop.relayMode = false;
       coop.role = "guest";
       coop.codeView = "remote";
       coop.scannedOfferReady = false;
@@ -5070,10 +5127,22 @@
 
     function coopPrimaryScanAction() {
       if (coop.role === "guest" && (coop.scannedOfferReady || !!coopGetRemoteSignal()) && !coopGetLocalSignal()) {
-        coopUseRemoteCode(coopGetRemoteSignal());
-        return;
+        return coopUseRemoteCode(coopGetRemoteSignal());
       }
-      coopStartQrScan();
+      return coopStartQrScan();
+    }
+
+    function coopUseButtonAction() {
+      if (coop.role === "host" && (/^FAILED\b/.test(coop.status) || /^TURN RELAY FAIL\b/.test(coop.status) || coop.lastError)) {
+        return coopStartRelayRetry();
+      }
+      return coopUseRemoteCode(document.getElementById("coop-code").value);
+    }
+
+    function coopStartRelayRetry() {
+      coop.relayMode = true;
+      coopToast("RELAY QR CREATING");
+      return coopChooseHost();
     }
 
     function coopSetVisibleCode(text, readonly) {
@@ -5127,11 +5196,17 @@
     function coopRefreshPanel() {
       if (!coopPanel) return;
       coopSyncManualCodeInput();
+      coopRenderStatus();
       const roleRow = document.getElementById("coop-role-row");
       const actionRow = document.getElementById("coop-action-row");
       const scanButton = document.getElementById("coop-scan");
       const useButton = document.getElementById("coop-use");
       const qrButton = document.getElementById("coop-qr-toggle");
+      const hostButton = document.getElementById("coop-host");
+      const guestButton = document.getElementById("coop-guest");
+      const resetButton = document.getElementById("coop-disconnect");
+      const copyButton = document.getElementById("coop-copy");
+      const copyQrButton = document.getElementById("coop-copy-qr");
       const copyRow = document.getElementById("coop-copy-row");
       const codeLabel = document.getElementById("coop-code-label");
       const help = document.getElementById("coop-help");
@@ -5139,19 +5214,25 @@
       if (!roleRow || !actionRow || !scanButton || !useButton || !qrButton || !copyRow || !codeLabel || !help || !net) return;
       const hasLocal = !!coopGetLocalSignal();
       const hasRemote = !!coopGetRemoteSignal();
+      const qrBox = document.getElementById("coop-qr-box");
+      const qrOpen = !!qrBox && qrBox.style.display !== "none";
+      const failed = /^FAILED\b/.test(coop.status) || /^TURN RELAY FAIL\b/.test(coop.status) || coop.lastError === "PC_FAILED" || coop.lastError === "ICE_FAILED" || /^NO_RELAY/.test(coop.lastError || "");
       roleRow.style.display = coop.role ? "none" : "grid";
       actionRow.style.display = coop.role ? "grid" : "none";
       scanButton.style.display = coop.role === "guest" && !hasLocal ? "" : "none";
       useButton.style.display = coop.role === "host" ? "" : "none";
-      qrButton.style.display = coop.role === "host" && hasLocal && coop.codeView === "local" ? "" : "none";
+      qrButton.style.display = hasLocal && coop.codeView === "local" ? "" : "none";
       copyRow.style.display = hasLocal && coop.codeView === "local" ? "flex" : "none";
       if (!coop.role) {
         codeLabel.textContent = "HOST OR GUEST";
         help.textContent = "PC uses HOST. Phone uses GUEST.";
       } else if (coop.role === "host") {
-        useButton.textContent = coop.codeView === "local" ? "ENTER GUEST CODE" : "CONNECT";
-        qrButton.textContent = "HOST QR";
-        if (coop.codeView === "local") {
+        useButton.textContent = failed ? "RETRY RELAY" : coop.codeView === "local" ? "ENTER GUEST CODE" : "CONNECT";
+        qrButton.textContent = qrOpen ? "HIDE HOST QR" : "SHOW HOST QR";
+        if (failed) {
+          codeLabel.textContent = "CONNECTION FAILED";
+          help.textContent = /^NO_RELAY/.test(coop.lastError || "") ? "TURN relay candidate was not created. This browser/network cannot reach the free relay server. Try RESET; if it repeats, a real TURN server is required." : hasRemote ? "Guest code was received, but WebRTC could not make a direct network path. Press RETRY RELAY to create a new host QR using TURN relay." : "Connection failed before the guest code was accepted. Try RESET.";
+        } else if (coop.codeView === "local") {
           codeLabel.textContent = "HOST QR - SHOW TO GUEST";
           help.textContent = "Guest scans this. Then enter the guest code here to finish.";
         } else {
@@ -5159,8 +5240,12 @@
           help.textContent = "Paste the code from the guest phone, then press CONNECT.";
         }
       } else {
+        qrButton.textContent = qrOpen ? "HIDE GUEST QR" : "SHOW GUEST QR";
         scanButton.textContent = (coop.scannedOfferReady || hasRemote) && !hasLocal ? "CONNECT" : "SCAN";
-        if (coop.codeView === "local") {
+        if (failed) {
+          codeLabel.textContent = "CONNECTION FAILED";
+          help.textContent = /^NO_RELAY/.test(coop.lastError || "") ? "TURN relay candidate was not created. This browser/network cannot reach the free relay server. Try RESET; if it repeats, a real TURN server is required." : hasLocal ? "This guest code is valid, but the host and guest could not connect through the network. Try RESET." : "Host code was read, but WebRTC could not make a network path. Try RESET.";
+        } else if (coop.codeView === "local") {
           codeLabel.textContent = "GUEST CODE - ENTER ON HOST";
           help.textContent = "Send or type this code into the host PC.";
         } else {
@@ -5170,7 +5255,21 @@
       }
       const types = " / TYPE " + (coop.localCandidateTypes || "-") + ":" + (coop.remoteCandidateTypes || "-");
       const error = coop.lastError ? " / ERR " + coop.lastError : "";
-      net.textContent = "PC " + coop.pcState + " / ICE " + coop.iceState + " / GATHER " + coop.iceGathering + " / CAND " + coop.localCandidates + ":" + coop.remoteCandidates + types + error;
+      const mode = "MODE " + (coop.relayMode ? "RELAY" : "DIRECT");
+      const role = mode + " / ROLE " + (coop.role || "-") + " / VIEW " + (coop.codeView || "-");
+      net.textContent = role + " / PC " + coop.pcState + " / ICE " + coop.iceState + " / GATHER " + coop.iceGathering + " / CAND " + coop.localCandidates + ":" + coop.remoteCandidates + types + error;
+      const lockButtons = [hostButton, guestButton, useButton, scanButton, qrButton, copyButton, copyQrButton];
+      lockButtons.forEach((button) => {
+        if (!button) return;
+        button.disabled = coop.busy;
+        button.style.opacity = coop.busy ? "0.46" : "1";
+        button.style.pointerEvents = coop.busy ? "none" : "auto";
+      });
+      if (resetButton) {
+        resetButton.disabled = false;
+        resetButton.style.opacity = "1";
+        resetButton.style.pointerEvents = "auto";
+      }
     }
 
     function ensureCoopPanel() {
@@ -5225,14 +5324,26 @@
       const buttonStyle = "background:#162234;color:#eef6ff;border:1px solid #405a72;border-radius:5px;padding:7px 6px;font-weight:700";
       coopPanel.querySelectorAll("button").forEach((button) => button.style.cssText = button.id === "coop-close" ? buttonStyle + ";padding:3px 8px" : buttonStyle);
       document.getElementById("coop-close").onclick = () => coopPanel.style.display = "none";
-      document.getElementById("coop-host").onclick = () => coopChooseHost();
-      document.getElementById("coop-guest").onclick = () => coopChooseGuest();
-      document.getElementById("coop-use").onclick = () => coopUseRemoteCode(document.getElementById("coop-code").value);
+      document.getElementById("coop-host").onclick = () => coopRunBusy("HOSTING", () => coopChooseHost());
+      document.getElementById("coop-guest").onclick = () => {
+        if (coop.busy) return;
+        coopChooseGuest();
+      };
+      document.getElementById("coop-use").onclick = () => coopRunBusy("CONNECTING", () => coopUseButtonAction());
       document.getElementById("coop-disconnect").onclick = () => coopDisconnect();
-      document.getElementById("coop-scan").onclick = () => coopPrimaryScanAction();
-      document.getElementById("coop-copy").onclick = () => coopCopyLocalSignal();
-      document.getElementById("coop-qr-toggle").onclick = () => coopToggleQr();
-      document.getElementById("coop-copy-qr").onclick = () => coopCopyQrImage();
+      document.getElementById("coop-scan").onclick = () => coopRunBusy(coop.scannedOfferReady || coopGetRemoteSignal() ? "CONNECTING" : "SCANNING", () => coopPrimaryScanAction());
+      document.getElementById("coop-copy").onclick = () => {
+        if (coop.busy) return;
+        coopCopyLocalSignal();
+      };
+      document.getElementById("coop-qr-toggle").onclick = () => {
+        if (coop.busy) return;
+        coopToggleQr();
+      };
+      document.getElementById("coop-copy-qr").onclick = () => {
+        if (coop.busy) return;
+        coopCopyQrImage();
+      };
       const codeNode = document.getElementById("coop-code");
       const handleCodeEdit = () => {
         if (coop.codeView !== "local") {
@@ -5347,6 +5458,11 @@
       }
     }
 
+    function coopHasRelay(side) {
+      const types = side === "local" ? coop.localCandidateTypes : coop.remoteCandidateTypes;
+      return /(^|\+)relay($|\+)/.test(types || "");
+    }
+
     async function coopPackSignal(description) {
       const json = JSON.stringify(description);
       if (window.CompressionStream) {
@@ -5433,6 +5549,7 @@
       const box = document.getElementById("coop-qr-box");
       box.style.display = box.style.display === "none" ? "block" : "none";
       updateCoopQr();
+      coopRefreshPanel();
     }
 
     function updateCoopQr() {
@@ -5654,10 +5771,13 @@
           { urls: "stun:global.stun.twilio.com:3478" },
           { urls: "stun:openrelay.metered.ca:80" },
           { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+          { urls: "turn:openrelay.metered.ca:80?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
           { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
-          { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
+          { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
+          { urls: "turns:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
         ],
         iceCandidatePoolSize: 8,
+        iceTransportPolicy: coop.relayMode ? "relay" : "all",
         bundlePolicy: "max-bundle",
         rtcpMuxPolicy: "require"
       });
@@ -5671,12 +5791,13 @@
         coop.connected = pc.connectionState === "connected";
         if (coop.connected) {
           coop.exchanging = false;
+          coop.lastError = "";
           setCoopStatus("CONNECTED");
           return;
         }
         if (coop.exchanging && (pc.connectionState === "failed" || pc.connectionState === "disconnected")) {
           coop.lastError = pc.connectionState === "failed" ? "PC_FAILED" : "PC_DISCONNECTED";
-          setCoopStatus(coop.role === "guest" ? "GUEST CODE READY" : "WAIT GUEST CODE");
+          setCoopStatus(pc.connectionState === "failed" ? "FAILED - NETWORK" : "DISCONNECTED");
           return;
         }
         if (pc.connectionState === "failed") coop.lastError = "PC_FAILED";
@@ -5710,26 +5831,33 @@
       coop.channel = channel;
       channel.onopen = () => {
         coop.connected = true;
+        coopSendTimer = 0;
+        coopWorldTimer = 0;
+        coopMapTimer = 0;
+        coopStartNetworkPump();
         setCoopStatus("CONNECTED");
         coopSendNow();
+        if (coop.role === "host") {
+          setTimeout(() => {
+            coopSendMap();
+            coopSendWorld();
+          }, 0);
+        }
       };
       channel.onclose = () => {
         coop.connected = false;
+        coopStopNetworkPump();
         setCoopStatus("CLOSED");
       };
       channel.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
           if (data.t === "state") {
-            coop.remote = {
-              x: Number(data.x) || 0,
-              y: Number(data.y) || 0,
-              angle: Number(data.angle) || 0,
-              hp: Math.max(0, Math.min(100, Number(data.hp) || 0)),
-              weapon: data.weapon || "rifle",
-              moving: !!data.moving,
-              last: performance.now()
-            };
+            coopApplyRemotePeerState(data);
+          } else if (data.t === "map" && coop.role === "guest") {
+            coopApplyHostMap(data);
+          } else if (data.t === "world" && coop.role === "guest") {
+            coopApplyHostWorld(data);
           }
         } catch (err) {
           console.warn("Bad coop message", err);
@@ -5790,6 +5918,7 @@
         coopAttachChannel(pc.createDataChannel("sang-sub-coop"));
         await pc.setLocalDescription(await pc.createOffer());
         await coopWaitIce(pc);
+        if (!coopCheckRelayCandidate("HOST")) return;
         await coopSetLocalDescriptionSignal(pc.localDescription);
         coopShowLocalCode();
         const qrBox = document.getElementById("coop-qr-box");
@@ -5814,9 +5943,13 @@
         await pc.setRemoteDescription(offer);
         await pc.setLocalDescription(await pc.createAnswer());
         await coopWaitIce(pc);
+        if (!coopCheckRelayCandidate("GUEST")) return;
         await coopSetLocalDescriptionSignal(pc.localDescription);
         coop.scannedOfferReady = false;
         coopShowLocalCode();
+        const qrBox = document.getElementById("coop-qr-box");
+        if (qrBox) qrBox.style.display = "block";
+        updateCoopQr();
         setCoopStatus("GUEST CODE READY");
       } catch (err) {
         setCoopStatus("ERROR");
@@ -5842,6 +5975,7 @@
       coopStopQrScan(false);
       if (coop.channel) coop.channel.close();
       if (coop.pc) coop.pc.close();
+      coopStopNetworkPump();
       coop.pc = null;
       coop.channel = null;
       coop.role = "";
@@ -5858,6 +5992,17 @@
       coop.localCandidateTypes = "";
       coop.remoteCandidateTypes = "";
       coop.lastError = "";
+      if (updateStatus) {
+        coop.busy = false;
+        coop.busyText = "";
+      }
+      coop.worldSeq = 0;
+      coop.mapSeq = 0;
+      coop.worldRecvAt = 0;
+      coopSendTimer = 0;
+      coopWorldTimer = 0;
+      coopMapTimer = 0;
+      if (updateStatus) coop.relayMode = false;
       if (coopPanel) {
         const local = document.getElementById("coop-local");
         const remote = document.getElementById("coop-remote");
@@ -5869,6 +6014,14 @@
         coopRefreshPanel();
       }
       if (updateStatus) setCoopStatus("OFFLINE");
+    }
+
+    function coopCheckRelayCandidate(stage) {
+      if (!coop.relayMode) return true;
+      if (coopHasRelay("local")) return true;
+      coop.lastError = "NO_RELAY_" + stage;
+      setCoopStatus("TURN RELAY FAIL");
+      return false;
     }
 
     function coopSendNow() {
@@ -5886,14 +6039,207 @@
     }
 
     function updateCoop(dt) {
-      coopSendTimer -= dt;
-      if (coopSendTimer <= 0) {
-        coopSendTimer = 1 / 12;
-        coopSendNow();
-      }
+      coopLerpRemotePeer(dt);
+      coopSmoothHostWorld(dt);
       if (coop.remote && performance.now() - coop.remote.last > 3200) {
         coop.remote = null;
       }
+    }
+
+    function coopStartNetworkPump() {
+      if (coopPumpHandle) return;
+      coopPumpLast = performance.now();
+      coopPumpHandle = setInterval(() => {
+        const now = performance.now();
+        const dt = Math.min(0.2, Math.max(0.001, (now - coopPumpLast) / 1000));
+        coopPumpLast = now;
+        coopNetworkPump(dt);
+      }, 33);
+    }
+
+    function coopStopNetworkPump() {
+      if (coopPumpHandle) clearInterval(coopPumpHandle);
+      coopPumpHandle = 0;
+    }
+
+    function coopNetworkPump(dt) {
+      if (!coop.connected || !coop.channel || coop.channel.readyState !== "open") return;
+      coopSendTimer -= dt;
+      if (coopSendTimer <= 0) {
+        coopSendTimer = 1 / 30;
+        coopSendNow();
+      }
+      if (coop.role === "host") {
+        coopMapTimer -= dt;
+        if (coopMapTimer <= 0) {
+          coopMapTimer = 2.5;
+          coopSendMap();
+        }
+        coopWorldTimer -= dt;
+        if (coopWorldTimer <= 0) {
+          coopWorldTimer = 1 / 20;
+          coopSendWorld();
+        }
+      }
+    }
+
+    function coopSendJson(payload) {
+      if (!coop.channel || coop.channel.readyState !== "open") return false;
+      if (coop.channel.bufferedAmount > 512000 && payload.t === "world") return false;
+      try {
+        coop.channel.send(JSON.stringify(payload));
+        return true;
+      } catch (err) {
+        console.warn("Coop send failed", err);
+        return false;
+      }
+    }
+
+    function coopApplyRemotePeerState(data) {
+      const now = performance.now();
+      const x = Number(data.x) || 0;
+      const y = Number(data.y) || 0;
+      if (!coop.remote) {
+        coop.remote = { x, y, sx: x, sy: y, tx: x, ty: y, interp: 1, last: now };
+      } else {
+        coop.remote.sx = coop.remote.x;
+        coop.remote.sy = coop.remote.y;
+        coop.remote.tx = x;
+        coop.remote.ty = y;
+        coop.remote.interp = 0;
+        coop.remote.last = now;
+      }
+      coop.remote.angle = Number(data.angle) || 0;
+      coop.remote.hp = Math.max(0, Math.min(100, Number(data.hp) || 0));
+      coop.remote.weapon = data.weapon || "rifle";
+      coop.remote.moving = !!data.moving;
+    }
+
+    function coopLerpRemotePeer(dt) {
+      if (!coop.remote) return;
+      const step = Math.min(1, dt * 22);
+      coop.remote.interp = Math.min(1, (coop.remote.interp || 0) + step);
+      const t = 1 - Math.pow(1 - coop.remote.interp, 2);
+      coop.remote.x = (coop.remote.sx || coop.remote.x) + ((coop.remote.tx || coop.remote.x) - (coop.remote.sx || coop.remote.x)) * t;
+      coop.remote.y = (coop.remote.sy || coop.remote.y) + ((coop.remote.ty || coop.remote.y) - (coop.remote.sy || coop.remote.y)) * t;
+    }
+
+    function coopSendMap() {
+      coop.mapSeq++;
+      coopSendJson({ t: "map", seq: coop.mapSeq, data: serializeMapData() });
+    }
+
+    function coopCloneFields(item, fields) {
+      const out = {};
+      for (const key of fields) {
+        if (item[key] !== undefined) out[key] = item[key];
+      }
+      return out;
+    }
+
+    function coopSendWorld() {
+      coop.worldSeq++;
+      coopSendJson({
+        t: "world",
+        seq: coop.worldSeq,
+        kills,
+        wave,
+        doors: doors.map((d) => coopCloneFields(d, ["open", "target", "axis", "x", "y", "w", "h"])),
+        props: props.map((p) => coopCloneFields(p, ["x", "y", "type", "s", "a", "hp", "maxHp", "hitFlash", "buildTime"])),
+        pickups: pickups.map((p) => coopCloneFields(p, ["x", "y", "r", "type", "life", "pulse"])),
+        enemies: enemies.map((e) => coopCloneFields(e, ["x", "y", "r", "collisionR", "hp", "maxHp", "angle", "kind", "fast", "freeze", "dropTime", "dropMax", "dropHeight", "raidLeader", "raidAggressive", "wobble"])),
+        bullets: bullets.map((b) => coopCloneFields(b, ["x", "y", "vx", "vy", "r", "life"])),
+        bombs: bombs.map((b) => coopCloneFields(b, ["x", "y", "sx", "sy", "tx", "ty", "life", "maxLife", "r", "hostile"])),
+        enemyTracers: enemyTracers.map((tr) => coopCloneFields(tr, ["x1", "y1", "x2", "y2", "life", "maxLife"])),
+        flameBursts: flameBursts.map((f) => coopCloneFields(f, ["x", "y", "angle", "life", "maxLife", "range"])),
+        iceStorms: iceStorms.map((s) => coopCloneFields(s, ["x", "y", "angle", "life", "maxLife", "range"]))
+      });
+    }
+
+    function coopApplyHostMap(data) {
+      if (!data || data.seq <= coop.mapSeq || !data.data) return;
+      coop.mapSeq = data.seq;
+      applyMapData(data.data);
+    }
+
+    function coopCopyArray(target, source) {
+      target.length = 0;
+      if (!Array.isArray(source)) return;
+      for (const item of source) target.push({ ...item });
+    }
+
+    function coopApplyHostWorld(data) {
+      if (!data || data.seq <= coop.worldSeq) return;
+      coop.worldSeq = data.seq;
+      coop.worldRecvAt = performance.now();
+      kills = Number.isFinite(data.kills) ? data.kills : kills;
+      wave = Number.isFinite(data.wave) ? data.wave : wave;
+      if (Array.isArray(data.doors)) {
+        for (let i = 0; i < data.doors.length; i++) {
+          if (!doors[i]) doors[i] = { x: data.doors[i].x, y: data.doors[i].y, w: data.doors[i].w, h: data.doors[i].h, axis: data.doors[i].axis || "h", open: 0, target: 0, range: 34 };
+          doors[i].open = Number(data.doors[i].open) || 0;
+          doors[i].target = Number(data.doors[i].target) || 0;
+        }
+      }
+      coopCopyArray(props, data.props);
+      coopCopyArray(pickups, data.pickups);
+      coopCopyArray(bullets, data.bullets);
+      coopCopyArray(bombs, data.bombs);
+      coopCopyArray(enemyTracers, data.enemyTracers);
+      coopCopyArray(flameBursts, data.flameBursts);
+      coopCopyArray(iceStorms, data.iceStorms);
+      coopApplyHostEnemies(data.enemies);
+    }
+
+    function coopApplyHostEnemies(remoteEnemies) {
+      if (!Array.isArray(remoteEnemies)) {
+        enemies.length = 0;
+        return;
+      }
+      while (enemies.length > remoteEnemies.length) enemies.pop();
+      for (let i = 0; i < remoteEnemies.length; i++) {
+        const incoming = remoteEnemies[i];
+        const current = enemies[i] || {};
+        const tx = Number(incoming.x) || 0;
+        const ty = Number(incoming.y) || 0;
+        if (!enemies[i]) {
+          enemies[i] = { ...incoming, x: tx, y: ty, netX: tx, netY: ty };
+        } else {
+          const oldX = Number.isFinite(current.x) ? current.x : tx;
+          const oldY = Number.isFinite(current.y) ? current.y : ty;
+          const snap = Math.hypot(oldX - tx, oldY - ty) > 260 || (current.kind && incoming.kind && current.kind !== incoming.kind);
+          Object.assign(current, incoming);
+          current.x = snap ? tx : oldX;
+          current.y = snap ? ty : oldY;
+          current.netX = tx;
+          current.netY = ty;
+          enemies[i] = current;
+        }
+      }
+    }
+
+    function coopSmoothHostWorld(dt) {
+      if (coop.role !== "guest" || !coop.connected) return;
+      for (const e of enemies) {
+        if (Number.isFinite(e.netX)) e.x += (e.netX - e.x) * Math.min(1, dt * 24);
+        if (Number.isFinite(e.netY)) e.y += (e.netY - e.y) * Math.min(1, dt * 24);
+      }
+      for (const b of bullets) {
+        if (Number.isFinite(b.vx)) b.x += b.vx * dt;
+        if (Number.isFinite(b.vy)) b.y += b.vy * dt;
+        b.life = Math.max(0, (b.life || 0) - dt);
+      }
+      for (const b of bombs) {
+        b.life = Math.max(0, (b.life || 0) - dt);
+        const t = 1 - Math.max(0, b.life / (b.maxLife || 1));
+        const ease = 1 - Math.pow(1 - t, 2);
+        b.x = b.sx + (b.tx - b.sx) * ease;
+        b.y = b.sy + (b.ty - b.sy) * ease;
+      }
+    }
+
+    function coopIsHostWorldClient() {
+      return coop.connected && coop.role === "guest";
     }
 
     function drawRemoteCoopPeer() {
