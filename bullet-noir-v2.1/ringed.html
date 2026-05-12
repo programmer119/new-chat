@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.21";
-    const BUILD_TIMESTAMP = "2026-05-13 02:20:00 KST";
+    const BUILD_VERSION = "2.1.22";
+    const BUILD_TIMESTAMP = "2026-05-13 02:35:12 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -126,6 +126,9 @@
     let coopShotSeq = 0;
     let coopSeenRemoteShotSeq = 0;
     let coopLastShot = null;
+    let coopActionSeq = 0;
+    let coopSeenRemoteActionSeq = 0;
+    let coopLastAction = null;
     let coopScanStream = null;
     let coopScanFrame = 0;
     let coopPanelPollTimer = 0;
@@ -1642,6 +1645,20 @@
       coopLastShot = { x1, y1, x2, y2, seq: coopShotSeq };
     }
 
+    function coopRememberAction(type, target) {
+      coopActionSeq++;
+      coopLastAction = {
+        type,
+        x: Number(target.x) || player.x,
+        y: Number(target.y) || player.y,
+        px: player.x,
+        py: player.y,
+        angle: player.angle,
+        seq: coopActionSeq
+      };
+      return coopLastAction;
+    }
+
     function coopGuestFireVisual(aimTarget) {
       normalizeSelectedWeapon();
       if (selectedWeapon !== "rifle" || shootCooldown > 0 || rifleReload > 0) return;
@@ -1684,6 +1701,23 @@
         burst(hit.x, hit.y, "#9f2a24", 5);
       } else if (hit.prop && hit.prop.type === "crate") {
         damageProp(hit.prop, 1, hit.x, hit.y);
+      }
+    }
+
+    function coopApplyRemoteAction(data) {
+      if (coop.role !== "host" || !data.action || Number(data.actionSeq) <= coopSeenRemoteActionSeq) return;
+      coopSeenRemoteActionSeq = Number(data.actionSeq);
+      const action = data.action;
+      if (action.type === "bomb") {
+        const source = {
+          x: Number(action.px) || Number(data.x) || 0,
+          y: Number(action.py) || Number(data.y) || 0,
+          angle: Number(action.angle) || Number(data.angle) || 0
+        };
+        addThrownBomb(source, { x: Number(action.x) || source.x, y: Number(action.y) || source.y }, {
+          owner: "guest",
+          actionSeq: Number(action.seq) || Number(data.actionSeq) || 0
+        });
       }
     }
 
@@ -1870,47 +1904,51 @@
       shake = Math.max(shake, 5);
     }
 
-    function throwBomb(target) {
-      if (bombCooldown > 0 || bombCount <= 0) return;
-      bombCooldown = 0.72;
-      bombCount--;
-      if (selectedWeapon === "bomb" && bombCount <= 0) selectedWeapon = "rifle";
-      const dx = target.x - player.x;
-      const dy = target.y - player.y;
+    function addThrownBomb(source, target, options = {}) {
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
       const d = Math.hypot(dx, dy) || 1;
-      const range = 140;
-      const tx = clamp(player.x + dx / d * range, 70, world.w - 70);
-      const ty = clamp(player.y + dy / d * range, 70, world.h - 70);
-      bombs.push({
-        x: player.x + Math.cos(player.angle) * 28,
-        y: player.y + Math.sin(player.angle) * 28,
-        sx: player.x,
-        sy: player.y,
+      const range = options.range || 140;
+      const angle = Number.isFinite(source.angle) ? source.angle : Math.atan2(dy, dx);
+      const tx = clamp(source.x + dx / d * range, 70, world.w - 70);
+      const ty = clamp(source.y + dy / d * range, 70, world.h - 70);
+      const bomb = {
+        x: source.x + Math.cos(angle) * 28,
+        y: source.y + Math.sin(angle) * 28,
+        sx: source.x,
+        sy: source.y,
         tx,
         ty,
-        life: 0.48,
-        maxLife: 0.48,
-        r: 13
+        life: options.life || 0.48,
+        maxLife: options.life || 0.48,
+        r: 13,
+        hostile: !!options.hostile,
+        localOnly: !!options.localOnly,
+        owner: options.owner || "player",
+        actionSeq: options.actionSeq || 0
+      };
+      bombs.push(bomb);
+      return bomb;
+    }
+
+    function throwBomb(target) {
+      if (bombCooldown > 0 || bombCount <= 0) return false;
+      bombCooldown = 0.72;
+      bombCount--;
+      const action = coopIsHostWorldClient() ? coopRememberAction("bomb", target) : null;
+      if (selectedWeapon === "bomb" && bombCount <= 0) selectedWeapon = "rifle";
+      addThrownBomb(player, target, {
+        localOnly: coopIsHostWorldClient(),
+        owner: coopIsHostWorldClient() ? "guest" : "player",
+        actionSeq: action ? action.seq : 0
       });
+      if (action) coopSendNow();
+      return true;
     }
 
     function throwEnemyBomb(enemy, target) {
-      const dx = target.x - enemy.x;
-      const dy = target.y - enemy.y;
-      const d = Math.hypot(dx, dy) || 1;
-      const range = Math.min(190, d);
-      bombs.push({
-        x: enemy.x,
-        y: enemy.y,
-        sx: enemy.x,
-        sy: enemy.y,
-        tx: clamp(enemy.x + dx / d * range, 70, world.w - 70),
-        ty: clamp(enemy.y + dy / d * range, 70, world.h - 70),
-        life: 0.52,
-        maxLife: 0.52,
-        r: 13,
-        hostile: true
-      });
+      const d = Math.hypot(target.x - enemy.x, target.y - enemy.y) || 1;
+      addThrownBomb(enemy, target, { range: Math.min(190, d), life: 0.52, hostile: true, owner: "enemy" });
     }
 
     function explodeBomb(bomb) {
@@ -1924,15 +1962,14 @@
       playSfx("flamer", 0.72);
       burstVisible(bomb.x, bomb.y, "#ffe4b0", 34, radius);
       if (bomb.hostile) {
-        const pd = Math.hypot(player.x - bomb.x, player.y - bomb.y);
-        if (pd <= radius && hasExplosionLineOfSight(bomb.x, bomb.y, player.x, player.y, pd) && player.invuln <= 0) {
-          player.hp -= 34 * (1 - pd / radius) + 16;
-          player.invuln = 0.22;
-          burst(player.x, player.y, "#9a1d18", 12);
-          if (player.hp <= 0) {
-            player.hp = 0;
-            state = "dead";
-            gameOverTimer = 0;
+        const bombTargets = [player];
+        if (coop.connected && coop.role === "host" && coop.remote && (coop.remote.hp || 0) > 0) bombTargets.push(coop.remote);
+        for (const target of bombTargets) {
+          const pd = Math.hypot(target.x - bomb.x, target.y - bomb.y);
+          if (pd <= radius && hasExplosionLineOfSight(bomb.x, bomb.y, target.x, target.y, pd) && (target.invuln || 0) <= 0) {
+            coopDamageTarget(target, 34 * (1 - pd / radius) + 16);
+            target.invuln = 0.22;
+            burst(target.x, target.y, "#9a1d18", 12);
           }
         }
         for (const prop of props.slice()) {
@@ -6211,7 +6248,9 @@
         weapon: selectedWeapon,
         moving: player.isMoving,
         shotSeq: coopShotSeq,
-        shot: coopLastShot
+        shot: coopLastShot,
+        actionSeq: coopActionSeq,
+        action: coopLastAction
       }));
       return true;
     }
@@ -6295,6 +6334,7 @@
       coop.remote.weapon = data.weapon || "rifle";
       coop.remote.moving = !!data.moving;
       coopApplyRemoteShotDamage(data);
+      coopApplyRemoteAction(data);
       if (Number(data.shotSeq) > coopSeenRemoteShotSeq && data.shot) {
         coopSeenRemoteShotSeq = Number(data.shotSeq);
         const shot = data.shot;
@@ -6343,7 +6383,7 @@
         pickups: pickups.map((p) => coopCloneFields(p, ["x", "y", "r", "type", "life", "pulse"])),
         enemies: enemies.map((e) => coopCloneFields(e, ["x", "y", "r", "collisionR", "hp", "maxHp", "angle", "kind", "fast", "freeze", "dropTime", "dropMax", "dropHeight", "raidLeader", "raidAggressive", "wobble"])),
         bullets: bullets.map((b) => coopCloneFields(b, ["x", "y", "vx", "vy", "r", "life"])),
-        bombs: bombs.map((b) => coopCloneFields(b, ["x", "y", "sx", "sy", "tx", "ty", "life", "maxLife", "r", "hostile"])),
+        bombs: bombs.filter((b) => !b.localOnly).map((b) => coopCloneFields(b, ["x", "y", "sx", "sy", "tx", "ty", "life", "maxLife", "r", "hostile", "owner", "actionSeq"])),
         enemyTracers: enemyTracers.map((tr) => coopCloneFields(tr, ["x1", "y1", "x2", "y2", "life", "maxLife"])),
         flameBursts: flameBursts.map((f) => coopCloneFields(f, ["x", "y", "angle", "life", "maxLife", "range"])),
         iceStorms: iceStorms.map((s) => coopCloneFields(s, ["x", "y", "angle", "life", "maxLife", "range"]))
@@ -6360,6 +6400,25 @@
       target.length = 0;
       if (!Array.isArray(source)) return;
       for (const item of source) target.push({ ...item });
+    }
+
+    function coopCopyBombsFromHost(source) {
+      const localBombs = bombs.filter((b) => b.localOnly && (b.life || 0) > 0);
+      coopCopyArray(bombs, source);
+      for (const localBomb of localBombs) {
+        const matchedHostBomb = bombs.find((b) => {
+          if (b.localOnly || b.owner !== "guest") return false;
+          if (localBomb.actionSeq && b.actionSeq && localBomb.actionSeq === b.actionSeq) return true;
+          return Math.hypot((b.tx || b.x) - (localBomb.tx || localBomb.x), (b.ty || b.y) - (localBomb.ty || localBomb.y)) < 28;
+        });
+        if (matchedHostBomb) {
+          matchedHostBomb.x = localBomb.x;
+          matchedHostBomb.y = localBomb.y;
+          matchedHostBomb.life = Math.min(matchedHostBomb.life || localBomb.life, localBomb.life || matchedHostBomb.life);
+        } else {
+          bombs.push(localBomb);
+        }
+      }
     }
 
     function coopApplyHostWorld(data) {
@@ -6387,7 +6446,7 @@
         coopCopyArray(props, data.props);
         coopCopyArray(pickups, data.pickups);
         coopCopyArray(bullets, data.bullets);
-        coopCopyArray(bombs, data.bombs);
+        coopCopyBombsFromHost(data.bombs);
         coopCopyArray(enemyTracers, data.enemyTracers);
         coopCopyArray(flameBursts, data.flameBursts);
         coopCopyArray(iceStorms, data.iceStorms);
@@ -6438,10 +6497,14 @@
       }
       for (const b of bombs) {
         b.life = Math.max(0, (b.life || 0) - dt);
+        if (b.localOnly && b.life <= 0) continue;
         const t = 1 - Math.max(0, b.life / (b.maxLife || 1));
         const ease = 1 - Math.pow(1 - t, 2);
         b.x = b.sx + (b.tx - b.sx) * ease;
         b.y = b.sy + (b.ty - b.sy) * ease;
+      }
+      for (let i = bombs.length - 1; i >= 0; i--) {
+        if (bombs[i].localOnly && (bombs[i].life || 0) <= 0) bombs.splice(i, 1);
       }
     }
 
@@ -6503,6 +6566,7 @@
       updateCamera(dt, isMobile ? mobileAimWorldTarget() : aimTarget);
       updateAimRay(isMobile ? mobileAimWorldTarget() : aimTarget);
       if (mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice")) coopGuestFireVisual(isMobile ? mobileAimWorldTarget() : aimTarget);
+      if (mouse.right || keys.has("KeyQ")) throwBomb(isMobile ? mobileAimWorldTarget() : aimTarget);
       if (isMobile && mobileControls.dodge) mobileControls.dodge = false;
       coopUpdateGuestEffects(dt);
     }
