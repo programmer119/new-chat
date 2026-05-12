@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.20";
-    const BUILD_TIMESTAMP = "2026-05-13 01:56:55 KST";
+    const BUILD_VERSION = "2.1.21";
+    const BUILD_TIMESTAMP = "2026-05-13 02:20:00 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -1663,6 +1663,28 @@
       tracers.push({ x1: sx, y1: sy, x2: hit.x, y2: hit.y, life: 0.09, maxLife: 0.09 });
       flashes.push({ x: sx + dx * 18, y: sy + dy * 18, angle: player.angle, life: 0.075, maxLife: 0.075 });
       coopRememberShot(sx, sy, hit.x, hit.y);
+      coopSendNow();
+    }
+
+    function coopApplyRemoteShotDamage(data) {
+      if (coop.role !== "host" || !data.shot || Number(data.shotSeq) <= coopSeenRemoteShotSeq) return;
+      coopSeenRemoteShotSeq = Number(data.shotSeq);
+      const shot = data.shot;
+      const x1 = Number(shot.x1) || Number(data.x) || 0;
+      const y1 = Number(shot.y1) || Number(data.y) || 0;
+      const x2 = Number(shot.x2) || x1;
+      const y2 = Number(shot.y2) || y1;
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const dist = Math.hypot(dx, dy) || 1;
+      const hit = raycastShot(x1, y1, dx / dist, dy / dist, dist);
+      tracers.push({ x1, y1, x2: hit.x, y2: hit.y, life: 0.12, maxLife: 0.12 });
+      if (hit.enemy) {
+        hit.enemy.hp -= 44;
+        burst(hit.x, hit.y, "#9f2a24", 5);
+      } else if (hit.prop && hit.prop.type === "crate") {
+        damageProp(hit.prop, 1, hit.x, hit.y);
+      }
     }
 
     function damageProp(prop, amount, x = prop.x, y = prop.y) {
@@ -2295,18 +2317,19 @@
           continue;
         }
         e.barricadeHit = Math.max(0, (e.barricadeHit || 0) - dt);
+        const targetPlayer = coopEnemyTarget(e);
         if (e.raidLeader && !e.raidBombThrown) {
-          throwEnemyBomb(e, { x: player.x, y: player.y });
+          throwEnemyBomb(e, { x: targetPlayer.x, y: targetPlayer.y });
           e.raidBombThrown = true;
         }
-        const dx = player.x - e.x;
-        const dy = player.y - e.y;
+        const dx = targetPlayer.x - e.x;
+        const dy = targetPlayer.y - e.y;
         const d = Math.hypot(dx, dy) || 1;
-        const seesPlayer = e.raidAggressive || (d < 720 && hasLineOfSight(e.x, e.y, player.x, player.y, d));
+        const seesPlayer = e.raidAggressive || (d < 720 && hasLineOfSight(e.x, e.y, targetPlayer.x, targetPlayer.y, d));
         if (seesPlayer) {
           e.alert = 5.5;
-          e.lastSeenX = player.x;
-          e.lastSeenY = player.y;
+          e.lastSeenX = targetPlayer.x;
+          e.lastSeenY = targetPlayer.y;
         } else {
           e.alert = Math.max(0, (e.alert || 0) - dt);
         }
@@ -2319,9 +2342,9 @@
         const sway = Math.sin(e.wobble) * 0.16 * orbitDamping;
         const preferred = e.kind === "shooter" ? 300 : (e.kind === "flamer" ? 230 : contact);
         const keepsRange = e.kind === "shooter" || e.kind === "flamer";
-        const targetX = seesPlayer ? player.x : e.lastSeenX;
-        const targetY = seesPlayer ? player.y : e.lastSeenY;
-        const raidPathTarget = e.raidAggressive && !hasLineOfSight(e.x, e.y, player.x, player.y, d) ? raidMoveTarget(e) : null;
+        const targetX = seesPlayer ? targetPlayer.x : e.lastSeenX;
+        const targetY = seesPlayer ? targetPlayer.y : e.lastSeenY;
+        const raidPathTarget = e.raidAggressive && targetPlayer === player && !hasLineOfSight(e.x, e.y, player.x, player.y, d) ? raidMoveTarget(e) : null;
         const actualTargetX = raidPathTarget ? raidPathTarget.x : targetX;
         const actualTargetY = raidPathTarget ? raidPathTarget.y : targetY;
         const tdx = actualTargetX - e.x;
@@ -2334,12 +2357,12 @@
         if (!seesPlayer && td < 42) e.alert = Math.min(e.alert, 0.7);
         e.bite -= dt;
         e.shoot -= dt;
-        const hasShotLine = d < 720 && hasLineOfSight(e.x, e.y, player.x, player.y, d, { ignoreBarricades: true });
+        const hasShotLine = d < 720 && hasLineOfSight(e.x, e.y, targetPlayer.x, targetPlayer.y, d, { ignoreBarricades: true });
         if (e.kind === "shooter" && e.shoot <= 0 && d < 620 && hasShotLine) {
-          enemyFire(e, dx / d, dy / d);
+          enemyFire(e, dx / d, dy / d, targetPlayer);
           e.shoot = e.fast ? 1.25 + Math.random() * 0.8 : 1.65 + Math.random() * 1.1;
         } else if (e.kind === "flamer" && e.shoot <= 0 && d > 72 && d < 285 && hasShotLine) {
-          enemyFlame(e, dx / d, dy / d);
+          enemyFlame(e, dx / d, dy / d, targetPlayer);
           e.shoot = e.fast ? 0.85 + Math.random() * 0.35 : 1.05 + Math.random() * 0.5;
         }
 
@@ -2363,17 +2386,12 @@
           }
         }
 
-        if (d < collisionRadius(e) + collisionRadius(player) + 12 && e.bite <= 0 && player.invuln <= 0) {
+        if (d < collisionRadius(e) + collisionRadius(targetPlayer) + 12 && e.bite <= 0 && (targetPlayer.invuln || 0) <= 0) {
           e.bite = 0.55;
-          player.hp -= e.fast ? 9 : 14;
-          player.invuln = 0.18;
-          burst(player.x, player.y, "#9a1d18", 10);
+          coopDamageTarget(targetPlayer, e.fast ? 9 : 14);
+          targetPlayer.invuln = 0.18;
+          burst(targetPlayer.x, targetPlayer.y, "#9a1d18", 10);
           shake = Math.max(shake, 10);
-          if (player.hp <= 0) {
-            player.hp = 0;
-            state = "dead";
-            gameOverTimer = 0;
-          }
         }
 
         if (e.hp <= 0) killEnemy(e, i);
@@ -2439,11 +2457,48 @@
       shake = Math.max(0, shake - dt * 30);
     }
 
-    function enemyFire(enemy, dx, dy) {
+    function coopEnemyTarget(enemy) {
+      if (!coop.connected || coop.role !== "host" || !coop.remote) return player;
+      if ((coop.remote.hp || 0) <= 0) return player;
+      const dp = dist2(enemy.x, enemy.y, player.x, player.y);
+      const dr = dist2(enemy.x, enemy.y, coop.remote.x, coop.remote.y);
+      const rd = Math.sqrt(dr);
+      const remoteVisible = rd < 760 && hasLineOfSight(enemy.x, enemy.y, coop.remote.x, coop.remote.y, rd);
+      return remoteVisible && dr < dp * 1.22 ? coop.remote : player;
+    }
+
+    function coopDamageTarget(target, amount) {
+      if (target === player) {
+        player.hp -= amount;
+        if (player.hp <= 0) {
+          player.hp = 0;
+          state = "dead";
+          gameOverTimer = 0;
+        }
+        return;
+      }
+      target.hp = Math.max(0, (target.hp || 100) - amount);
+      coopSendJson({ t: "damage", amount, hp: target.hp, seq: performance.now() });
+    }
+
+    function coopApplyDamage(data) {
+      const amount = Math.max(0, Number(data.amount) || 0);
+      if (!amount || player.invuln > 0) return;
+      player.hp = Number.isFinite(data.hp) ? Math.max(0, Number(data.hp)) : player.hp - amount;
+      player.invuln = 0.14;
+      burst(player.x, player.y, "#8f201d", 6);
+      if (player.hp <= 0) {
+        player.hp = 0;
+        state = "dead";
+        gameOverTimer = 0;
+      }
+    }
+
+    function enemyFire(enemy, dx, dy, targetPlayer = player) {
       playSfx("enemyGun", enemy.fast ? 1.08 : 0.86);
       const sx = enemy.x + dx * (enemy.r + 16);
       const sy = enemy.y + dy * (enemy.r + 16);
-      const target = raycastEnemyShot(sx, sy, dx, dy, Math.hypot(player.x - sx, player.y - sy));
+      const target = raycastEnemyShot(sx, sy, dx, dy, Math.hypot(targetPlayer.x - sx, targetPlayer.y - sy));
       const px = target.x;
       const py = target.y;
       enemyTracers.push({
@@ -2458,15 +2513,10 @@
         damageBarricade(target.prop, 1, target.x, target.y);
         return;
       }
-      if (player.invuln <= 0) {
-        player.hp -= enemy.fast ? 5 : 8;
-        player.invuln = 0.08;
-        burst(player.x, player.y, "#8f201d", 4);
-        if (player.hp <= 0) {
-          player.hp = 0;
-          state = "dead";
-          gameOverTimer = 0;
-        }
+      if ((targetPlayer.invuln || 0) <= 0) {
+        coopDamageTarget(targetPlayer, enemy.fast ? 5 : 8);
+        targetPlayer.invuln = 0.08;
+        burst(targetPlayer.x, targetPlayer.y, "#8f201d", 4);
       }
     }
 
@@ -2479,7 +2529,7 @@
       introSoundStarted = true;
     }
 
-    function enemyFlame(enemy, dx, dy) {
+    function enemyFlame(enemy, dx, dy, targetPlayer = player) {
       playSfx("flamer", 1.45);
       const sx = enemy.x + dx * (enemy.r + 17);
       const sy = enemy.y + dy * (enemy.r + 17);
@@ -2500,20 +2550,15 @@
         maxLife: 0.08
       });
       damageBarricadesInCone(sx, sy, dx, dy, enemy.fast ? 188 : 210, enemy.fast ? 34 : 40, 0.18, enemy.fast ? 1 : 2);
-      const barrierHit = raycastEnemyShot(sx, sy, dx, dy, Math.hypot(player.x - sx, player.y - sy));
+      const barrierHit = raycastEnemyShot(sx, sy, dx, dy, Math.hypot(targetPlayer.x - sx, targetPlayer.y - sy));
       if (barrierHit.prop && barrierHit.prop.type === "barricade") {
         return;
       }
-      if (player.invuln <= 0) {
-        player.hp -= enemy.fast ? 8 : 12;
-        player.invuln = 0.14;
-        burst(player.x, player.y, "#e46a32", 7);
+      if ((targetPlayer.invuln || 0) <= 0) {
+        coopDamageTarget(targetPlayer, enemy.fast ? 8 : 12);
+        targetPlayer.invuln = 0.14;
+        burst(targetPlayer.x, targetPlayer.y, "#e46a32", 7);
         shake = Math.max(shake, 5);
-        if (player.hp <= 0) {
-          player.hp = 0;
-          state = "dead";
-          gameOverTimer = 0;
-        }
       }
     }
 
@@ -3156,7 +3201,7 @@
         const h = prop.h || 24;
         return { x: prop.x - w / 2, y: prop.y - h / 2, w, h };
       }
-      const size = 34 * prop.s;
+      const size = 34 * (Number(prop.s) || 1);
       return { x: prop.x - size / 2, y: prop.y - size / 2, w: size, h: size };
     }
 
@@ -5973,6 +6018,8 @@
             coopApplyHostMap(data);
           } else if (data.t === "world" && coop.role === "guest") {
             coopApplyHostWorld(data);
+          } else if (data.t === "damage" && coop.role === "guest") {
+            coopApplyDamage(data);
           }
         } catch (err) {
           console.warn("Bad coop message", err);
@@ -6172,6 +6219,7 @@
     function updateCoop(dt) {
       coopLerpRemotePeer(dt);
       coopSmoothHostWorld(dt);
+      if (coop.remote) coop.remote.invuln = Math.max(0, (coop.remote.invuln || 0) - dt);
       if (coop.remote && performance.now() - coop.remote.last > 3200) {
         coop.remote = null;
       }
@@ -6231,7 +6279,7 @@
       const x = Number(data.x) || 0;
       const y = Number(data.y) || 0;
       if (!coop.remote) {
-        coop.remote = { x, y, sx: x, sy: y, tx: x, ty: y, interp: 1, last: now };
+        coop.remote = { x, y, sx: x, sy: y, tx: x, ty: y, interp: 1, last: now, r: 24, collisionR: 15, invuln: 0 };
       } else {
         coop.remote.sx = coop.remote.x;
         coop.remote.sy = coop.remote.y;
@@ -6242,8 +6290,11 @@
       }
       coop.remote.angle = Number(data.angle) || 0;
       coop.remote.hp = Math.max(0, Math.min(100, Number(data.hp) || 0));
+      coop.remote.r = 24;
+      coop.remote.collisionR = 15;
       coop.remote.weapon = data.weapon || "rifle";
       coop.remote.moving = !!data.moving;
+      coopApplyRemoteShotDamage(data);
       if (Number(data.shotSeq) > coopSeenRemoteShotSeq && data.shot) {
         coopSeenRemoteShotSeq = Number(data.shotSeq);
         const shot = data.shot;
@@ -6316,7 +6367,7 @@
         if (!data || data.seq <= coop.worldSeq) return;
         coop.worldSeq = data.seq;
         coop.worldRecvAt = performance.now();
-        if (state !== "play") state = "play";
+        if (state !== "play" && state !== "dead") state = "play";
         kills = Number.isFinite(data.kills) ? data.kills : kills;
         wave = Number.isFinite(data.wave) ? data.wave : wave;
         if (Array.isArray(data.doors)) {
