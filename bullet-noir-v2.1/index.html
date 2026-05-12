@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.22";
-    const BUILD_TIMESTAMP = "2026-05-13 02:35:12 KST";
+    const BUILD_VERSION = "2.1.23";
+    const BUILD_TIMESTAMP = "2026-05-13 02:47:07 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -156,6 +156,7 @@
       worldSeq: 0,
       mapSeq: 0,
       worldRecvAt: 0,
+      connectedAt: 0,
       lastError: ""
     };
     window.coop = coop;
@@ -1649,14 +1650,21 @@
       coopActionSeq++;
       coopLastAction = {
         type,
-        x: Number(target.x) || player.x,
-        y: Number(target.y) || player.y,
+        x: Number(target && target.x) || player.x,
+        y: Number(target && target.y) || player.y,
         px: player.x,
         py: player.y,
         angle: player.angle,
         seq: coopActionSeq
       };
       return coopLastAction;
+    }
+
+    function coopRememberSpecialForcesAction(enabled) {
+      const action = coopRememberAction("specialForces", { x: player.x, y: player.y });
+      action.enabled = !!enabled;
+      coopSendNow();
+      return action;
     }
 
     function coopGuestFireVisual(aimTarget) {
@@ -1718,6 +1726,8 @@
           owner: "guest",
           actionSeq: Number(action.seq) || Number(data.actionSeq) || 0
         });
+      } else if (action.type === "specialForces") {
+        setSpecialForcesEnabled(!!action.enabled, action.enabled ? "SPECIAL ON" : "SPECIAL OFF");
       }
     }
 
@@ -5103,7 +5113,9 @@
     function handleSpecialForcesToggleClick(x, y) {
       const rect = specialForcesToggleRect();
       if (x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h) {
-        setSpecialForcesEnabled(!specialForcesEnabled, specialForcesEnabled ? "SPECIAL OFF" : "SPECIAL ON");
+        const next = !specialForcesEnabled;
+        setSpecialForcesEnabled(next, next ? "SPECIAL ON" : "SPECIAL OFF");
+        if (coopIsHostWorldClient()) coopRememberSpecialForcesAction(next);
         return true;
       }
       return false;
@@ -6065,16 +6077,33 @@
     }
 
     function coopOnConnected() {
+      coop.connectedAt = performance.now();
       if (coopPanel) coopPanel.style.display = "none";
       coopToast("NETWORK CONNECTED", true);
       if (coop.role === "guest") {
         if (state !== "play") state = "play";
+        coopResetGuestTransientEffects();
         if (isMobile) initMobileAimCursor();
         updateCamera(1, mobileAimWorldTarget());
       }
       for (let i = 0; i < 8; i++) {
         setTimeout(() => coopSendNow(), i * 80);
       }
+    }
+
+    function coopResetGuestTransientEffects() {
+      shake = 0;
+      particles.length = 0;
+      tracers.length = 0;
+      enemyTracers.length = 0;
+      flashes.length = 0;
+      flameBursts.length = 0;
+      iceStorms.length = 0;
+      blastLights.length = 0;
+      fizzles.length = 0;
+      dashBursts.length = 0;
+      deathTexts.length = 0;
+      speechBubbles.length = 0;
     }
 
     async function coopWaitIce(pc) {
@@ -6371,6 +6400,17 @@
       return out;
     }
 
+    function coopSerializeSpeechBubble(bubble) {
+      return {
+        text: bubble.text,
+        delay: bubble.delay,
+        life: bubble.life,
+        maxLife: bubble.maxLife,
+        screen: !!bubble.screen,
+        enemyIndex: bubble.enemy ? enemies.indexOf(bubble.enemy) : -1
+      };
+    }
+
     function coopSendWorld() {
       coop.worldSeq++;
       coopSendJson({
@@ -6378,12 +6418,22 @@
         seq: coop.worldSeq,
         kills,
         wave,
+        shake: Math.min(10, Math.max(0, shake)),
+        fixtureBoost,
+        specialForcesEnabled,
+        raidWarningActive,
+        raidWarningPulse,
         doors: doors.map((d) => coopCloneFields(d, ["open", "target", "axis", "x", "y", "w", "h"])),
         props: props.map((p) => coopCloneFields(p, ["x", "y", "type", "s", "a", "hp", "maxHp", "hitFlash", "buildTime"])),
         pickups: pickups.map((p) => coopCloneFields(p, ["x", "y", "r", "type", "life", "pulse"])),
         enemies: enemies.map((e) => coopCloneFields(e, ["x", "y", "r", "collisionR", "hp", "maxHp", "angle", "kind", "fast", "freeze", "dropTime", "dropMax", "dropHeight", "raidLeader", "raidAggressive", "wobble"])),
         bullets: bullets.map((b) => coopCloneFields(b, ["x", "y", "vx", "vy", "r", "life"])),
         bombs: bombs.filter((b) => !b.localOnly).map((b) => coopCloneFields(b, ["x", "y", "sx", "sy", "tx", "ty", "life", "maxLife", "r", "hostile", "owner", "actionSeq"])),
+        corpses: corpses.map((c) => coopCloneFields(c, ["x", "y", "r", "fast", "angle", "pose", "stain"])),
+        deathTexts: deathTexts.map((t) => coopCloneFields(t, ["x", "y", "life", "maxLife", "angle"])),
+        blastLights: blastLights.map((b) => coopCloneFields(b, ["x", "y", "life", "maxLife", "radius"])),
+        fizzles: fizzles.map((f) => coopCloneFields(f, ["x", "y", "life", "maxLife", "angle"])),
+        speechBubbles: speechBubbles.map(coopSerializeSpeechBubble),
         enemyTracers: enemyTracers.map((tr) => coopCloneFields(tr, ["x1", "y1", "x2", "y2", "life", "maxLife"])),
         flameBursts: flameBursts.map((f) => coopCloneFields(f, ["x", "y", "angle", "life", "maxLife", "range"])),
         iceStorms: iceStorms.map((s) => coopCloneFields(s, ["x", "y", "angle", "life", "maxLife", "range"]))
@@ -6421,6 +6471,21 @@
       }
     }
 
+    function coopApplyHostSpeechBubbles(remoteBubbles) {
+      speechBubbles.length = 0;
+      if (!Array.isArray(remoteBubbles)) return;
+      for (const incoming of remoteBubbles) {
+        speechBubbles.push({
+          text: incoming.text || "",
+          delay: Number(incoming.delay) || 0,
+          life: Number(incoming.life) || 0,
+          maxLife: Number(incoming.maxLife) || 1,
+          screen: !!incoming.screen,
+          enemy: Number.isInteger(incoming.enemyIndex) && incoming.enemyIndex >= 0 ? enemies[incoming.enemyIndex] || null : null
+        });
+      }
+    }
+
     function coopApplyHostWorld(data) {
       try {
         if (!data || data.seq <= coop.worldSeq) return;
@@ -6429,6 +6494,12 @@
         if (state !== "play" && state !== "dead") state = "play";
         kills = Number.isFinite(data.kills) ? data.kills : kills;
         wave = Number.isFinite(data.wave) ? data.wave : wave;
+        fixtureBoost = Number.isFinite(data.fixtureBoost) ? data.fixtureBoost : fixtureBoost;
+        specialForcesEnabled = !!data.specialForcesEnabled;
+        raidWarningActive = !!data.raidWarningActive;
+        raidWarningPulse = Number.isFinite(data.raidWarningPulse) ? data.raidWarningPulse : raidWarningPulse;
+        const incomingShake = Number(data.shake) || 0;
+        if (performance.now() - (coop.connectedAt || 0) > 650) shake = Math.max(shake, Math.min(8, incomingShake));
         if (Array.isArray(data.doors)) {
           while (doors.length > data.doors.length) doors.pop();
           for (let i = 0; i < data.doors.length; i++) {
@@ -6447,10 +6518,15 @@
         coopCopyArray(pickups, data.pickups);
         coopCopyArray(bullets, data.bullets);
         coopCopyBombsFromHost(data.bombs);
+        coopCopyArray(corpses, data.corpses);
+        coopCopyArray(deathTexts, data.deathTexts);
+        coopCopyArray(blastLights, data.blastLights);
+        coopCopyArray(fizzles, data.fizzles);
         coopCopyArray(enemyTracers, data.enemyTracers);
         coopCopyArray(flameBursts, data.flameBursts);
         coopCopyArray(iceStorms, data.iceStorms);
         coopApplyHostEnemies(data.enemies);
+        coopApplyHostSpeechBubbles(data.speechBubbles);
       } catch (err) {
         console.warn("Coop world apply failed", err);
         coopToast("SYNC RECOVERED", false);
@@ -6530,6 +6606,20 @@
         flashes[i].life -= dt;
         if (flashes[i].life <= 0) flashes.splice(i, 1);
       }
+      for (let i = blastLights.length - 1; i >= 0; i--) {
+        blastLights[i].life -= dt;
+        if (blastLights[i].life <= 0) blastLights.splice(i, 1);
+      }
+      for (let i = fizzles.length - 1; i >= 0; i--) {
+        fizzles[i].life -= dt;
+        if (fizzles[i].life <= 0) fizzles.splice(i, 1);
+      }
+      for (let i = deathTexts.length - 1; i >= 0; i--) {
+        deathTexts[i].life -= dt;
+        if (deathTexts[i].life <= 0) deathTexts.splice(i, 1);
+      }
+      updateSpeechBubbles(dt);
+      updateRaidWarningEffects(dt);
       for (let i = flameBursts.length - 1; i >= 0; i--) flameBursts[i].life = Math.max(0, flameBursts[i].life - dt);
       for (let i = iceStorms.length - 1; i >= 0; i--) iceStorms[i].life = Math.max(0, iceStorms[i].life - dt);
     }
