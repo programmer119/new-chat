@@ -122,7 +122,8 @@
       role: "",
       status: "OFFLINE",
       remote: null,
-      connected: false
+      connected: false,
+      exchanging: false
     };
     window.coop = coop;
     const isMobile = detectMobileDevice();
@@ -5383,7 +5384,16 @@
       coop.pc = pc;
       pc.onconnectionstatechange = () => {
         coop.connected = pc.connectionState === "connected";
-        setCoopStatus(coop.connected ? "CONNECTED" : pc.connectionState.toUpperCase());
+        if (coop.connected) {
+          coop.exchanging = false;
+          setCoopStatus("CONNECTED");
+          return;
+        }
+        if (coop.exchanging && (pc.connectionState === "failed" || pc.connectionState === "disconnected")) {
+          setCoopStatus(coop.role === "guest" ? "SEND GUEST CODE" : "WAIT GUEST CODE");
+          return;
+        }
+        setCoopStatus(pc.connectionState.toUpperCase());
       };
       pc.ondatachannel = (event) => coopAttachChannel(event.channel);
       return pc;
@@ -5459,6 +5469,7 @@
         setCoopStatus("HOSTING");
         const pc = coopCreatePeer();
         coop.role = "host";
+        coop.exchanging = true;
         coopAttachChannel(pc.createDataChannel("sang-sub-coop"));
         await pc.setLocalDescription(await pc.createOffer());
         await coopWaitIce(pc);
@@ -5476,6 +5487,7 @@
         setCoopStatus("JOINING");
         const pc = coopCreatePeer();
         coop.role = "guest";
+        coop.exchanging = true;
         await pc.setRemoteDescription(await coopUnpackSignal(offerText || coopGetRemoteSignal()));
         await pc.setLocalDescription(await pc.createAnswer());
         await coopWaitIce(pc);
@@ -5491,6 +5503,7 @@
       try {
         if (!coop.pc) throw new Error("Host peer missing");
         await coop.pc.setRemoteDescription(await coopUnpackSignal(answerText || coopGetRemoteSignal()));
+        coop.exchanging = false;
         setCoopStatus("CONNECTING");
       } catch (err) {
         setCoopStatus("ERROR");
@@ -5507,6 +5520,7 @@
       coop.role = "";
       coop.remote = null;
       coop.connected = false;
+      coop.exchanging = false;
       if (updateStatus) setCoopStatus("OFFLINE");
     }
 
