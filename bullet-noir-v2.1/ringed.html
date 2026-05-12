@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.9";
-    const BUILD_TIMESTAMP = "2026-05-12 21:51:36 KST";
+    const BUILD_VERSION = "2.1.10";
+    const BUILD_TIMESTAMP = "2026-05-12 21:59:00 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -137,6 +137,7 @@
       remoteCandidates: 0,
       localCandidateTypes: "",
       remoteCandidateTypes: "",
+      relayMode: false,
       lastError: ""
     };
     window.coop = coop;
@@ -5060,6 +5061,7 @@
 
     function coopChooseGuest() {
       coopDisconnect(false);
+      coop.relayMode = false;
       coop.role = "guest";
       coop.codeView = "remote";
       coop.scannedOfferReady = false;
@@ -5074,6 +5076,20 @@
         return;
       }
       coopStartQrScan();
+    }
+
+    function coopUseButtonAction() {
+      if (coop.role === "host" && (/^FAILED\b/.test(coop.status) || /^TURN RELAY FAIL\b/.test(coop.status) || coop.lastError)) {
+        coopStartRelayRetry();
+        return;
+      }
+      coopUseRemoteCode(document.getElementById("coop-code").value);
+    }
+
+    function coopStartRelayRetry() {
+      coop.relayMode = true;
+      coopToast("RELAY QR CREATING");
+      coopChooseHost();
     }
 
     function coopSetVisibleCode(text, readonly) {
@@ -5139,7 +5155,7 @@
       if (!roleRow || !actionRow || !scanButton || !useButton || !qrButton || !copyRow || !codeLabel || !help || !net) return;
       const hasLocal = !!coopGetLocalSignal();
       const hasRemote = !!coopGetRemoteSignal();
-      const failed = /^FAILED\b/.test(coop.status) || coop.lastError === "PC_FAILED" || coop.lastError === "ICE_FAILED";
+      const failed = /^FAILED\b/.test(coop.status) || /^TURN RELAY FAIL\b/.test(coop.status) || coop.lastError === "PC_FAILED" || coop.lastError === "ICE_FAILED" || /^NO_RELAY/.test(coop.lastError || "");
       roleRow.style.display = coop.role ? "none" : "grid";
       actionRow.style.display = coop.role ? "grid" : "none";
       scanButton.style.display = coop.role === "guest" && !hasLocal ? "" : "none";
@@ -5150,11 +5166,11 @@
         codeLabel.textContent = "HOST OR GUEST";
         help.textContent = "PC uses HOST. Phone uses GUEST.";
       } else if (coop.role === "host") {
-        useButton.textContent = coop.codeView === "local" ? "ENTER GUEST CODE" : "CONNECT";
+        useButton.textContent = failed ? "RETRY RELAY" : coop.codeView === "local" ? "ENTER GUEST CODE" : "CONNECT";
         qrButton.textContent = "HOST QR";
         if (failed) {
           codeLabel.textContent = "CONNECTION FAILED";
-          help.textContent = hasRemote ? "Guest code was received, but WebRTC could not make a network path. Try RESET, or use a relay/TURN build." : "Connection failed before the guest code was accepted. Try RESET.";
+          help.textContent = /^NO_RELAY/.test(coop.lastError || "") ? "TURN relay candidate was not created. This browser/network cannot reach the free relay server. Try RESET; if it repeats, a real TURN server is required." : hasRemote ? "Guest code was received, but WebRTC could not make a direct network path. Press RETRY RELAY to create a new host QR using TURN relay." : "Connection failed before the guest code was accepted. Try RESET.";
         } else if (coop.codeView === "local") {
           codeLabel.textContent = "HOST QR - SHOW TO GUEST";
           help.textContent = "Guest scans this. Then enter the guest code here to finish.";
@@ -5166,7 +5182,7 @@
         scanButton.textContent = (coop.scannedOfferReady || hasRemote) && !hasLocal ? "CONNECT" : "SCAN";
         if (failed) {
           codeLabel.textContent = "CONNECTION FAILED";
-          help.textContent = hasLocal ? "This guest code is valid, but the host and guest could not connect through the network. Try RESET, or use a relay/TURN build." : "Host code was read, but WebRTC could not make a network path. Try RESET.";
+          help.textContent = /^NO_RELAY/.test(coop.lastError || "") ? "TURN relay candidate was not created. This browser/network cannot reach the free relay server. Try RESET; if it repeats, a real TURN server is required." : hasLocal ? "This guest code is valid, but the host and guest could not connect through the network. Try RESET." : "Host code was read, but WebRTC could not make a network path. Try RESET.";
         } else if (coop.codeView === "local") {
           codeLabel.textContent = "GUEST CODE - ENTER ON HOST";
           help.textContent = "Send or type this code into the host PC.";
@@ -5177,7 +5193,8 @@
       }
       const types = " / TYPE " + (coop.localCandidateTypes || "-") + ":" + (coop.remoteCandidateTypes || "-");
       const error = coop.lastError ? " / ERR " + coop.lastError : "";
-      const role = "ROLE " + (coop.role || "-") + " / VIEW " + (coop.codeView || "-");
+      const mode = "MODE " + (coop.relayMode ? "RELAY" : "DIRECT");
+      const role = mode + " / ROLE " + (coop.role || "-") + " / VIEW " + (coop.codeView || "-");
       net.textContent = role + " / PC " + coop.pcState + " / ICE " + coop.iceState + " / GATHER " + coop.iceGathering + " / CAND " + coop.localCandidates + ":" + coop.remoteCandidates + types + error;
     }
 
@@ -5235,7 +5252,7 @@
       document.getElementById("coop-close").onclick = () => coopPanel.style.display = "none";
       document.getElementById("coop-host").onclick = () => coopChooseHost();
       document.getElementById("coop-guest").onclick = () => coopChooseGuest();
-      document.getElementById("coop-use").onclick = () => coopUseRemoteCode(document.getElementById("coop-code").value);
+      document.getElementById("coop-use").onclick = () => coopUseButtonAction();
       document.getElementById("coop-disconnect").onclick = () => coopDisconnect();
       document.getElementById("coop-scan").onclick = () => coopPrimaryScanAction();
       document.getElementById("coop-copy").onclick = () => coopCopyLocalSignal();
@@ -5353,6 +5370,11 @@
         coop.remoteCandidates = count;
         coop.remoteCandidateTypes = types;
       }
+    }
+
+    function coopHasRelay(side) {
+      const types = side === "local" ? coop.localCandidateTypes : coop.remoteCandidateTypes;
+      return /(^|\+)relay($|\+)/.test(types || "");
     }
 
     async function coopPackSignal(description) {
@@ -5662,10 +5684,13 @@
           { urls: "stun:global.stun.twilio.com:3478" },
           { urls: "stun:openrelay.metered.ca:80" },
           { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+          { urls: "turn:openrelay.metered.ca:80?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
           { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
-          { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
+          { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
+          { urls: "turns:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
         ],
         iceCandidatePoolSize: 8,
+        iceTransportPolicy: coop.relayMode ? "relay" : "all",
         bundlePolicy: "max-bundle",
         rtcpMuxPolicy: "require"
       });
@@ -5679,6 +5704,7 @@
         coop.connected = pc.connectionState === "connected";
         if (coop.connected) {
           coop.exchanging = false;
+          coop.lastError = "";
           setCoopStatus("CONNECTED");
           return;
         }
@@ -5798,6 +5824,7 @@
         coopAttachChannel(pc.createDataChannel("sang-sub-coop"));
         await pc.setLocalDescription(await pc.createOffer());
         await coopWaitIce(pc);
+        if (!coopCheckRelayCandidate("HOST")) return;
         await coopSetLocalDescriptionSignal(pc.localDescription);
         coopShowLocalCode();
         const qrBox = document.getElementById("coop-qr-box");
@@ -5822,6 +5849,7 @@
         await pc.setRemoteDescription(offer);
         await pc.setLocalDescription(await pc.createAnswer());
         await coopWaitIce(pc);
+        if (!coopCheckRelayCandidate("GUEST")) return;
         await coopSetLocalDescriptionSignal(pc.localDescription);
         coop.scannedOfferReady = false;
         coopShowLocalCode();
@@ -5866,6 +5894,7 @@
       coop.localCandidateTypes = "";
       coop.remoteCandidateTypes = "";
       coop.lastError = "";
+      if (updateStatus) coop.relayMode = false;
       if (coopPanel) {
         const local = document.getElementById("coop-local");
         const remote = document.getElementById("coop-remote");
@@ -5877,6 +5906,14 @@
         coopRefreshPanel();
       }
       if (updateStatus) setCoopStatus("OFFLINE");
+    }
+
+    function coopCheckRelayCandidate(stage) {
+      if (!coop.relayMode) return true;
+      if (coopHasRelay("local")) return true;
+      coop.lastError = "NO_RELAY_" + stage;
+      setCoopStatus("TURN RELAY FAIL");
+      return false;
     }
 
     function coopSendNow() {
