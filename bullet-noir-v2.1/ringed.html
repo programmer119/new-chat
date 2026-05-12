@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.1";
-    const BUILD_TIMESTAMP = "2026-05-12 20:16:39 KST";
+    const BUILD_VERSION = "2.1.2";
+    const BUILD_TIMESTAMP = "2026-05-12 20:31:20 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -127,7 +127,8 @@
       remote: null,
       connected: false,
       exchanging: false,
-      codeView: "remote"
+      codeView: "remote",
+      scannedOfferReady: false
     };
     window.coop = coop;
     const isMobile = detectMobileDevice();
@@ -5042,6 +5043,7 @@
     function coopChooseHost() {
       coop.role = "host";
       coop.codeView = "local";
+      coop.scannedOfferReady = false;
       coopRefreshPanel();
       coopStartHost();
     }
@@ -5050,9 +5052,18 @@
       coopDisconnect(false);
       coop.role = "guest";
       coop.codeView = "remote";
+      coop.scannedOfferReady = false;
       coopSetVisibleCode("", false);
       setCoopStatus("SCAN HOST QR");
       coopRefreshPanel();
+    }
+
+    function coopPrimaryScanAction() {
+      if (coop.role === "guest" && coop.scannedOfferReady && !coopGetLocalSignal()) {
+        coopUseRemoteCode(coopGetRemoteSignal());
+        return;
+      }
+      coopStartQrScan();
     }
 
     function coopSetVisibleCode(text, readonly) {
@@ -5069,8 +5080,12 @@
     }
 
     function coopShowRemoteCode() {
+      const remoteNode = document.getElementById("coop-remote");
+      const remoteCode = remoteNode ? remoteNode.value : "";
       coop.codeView = "remote";
-      coopSetVisibleCode(coopGetRemoteSignal(), false);
+      coopSetVisibleCode(remoteCode, false);
+      const qrBox = document.getElementById("coop-qr-box");
+      if (qrBox) qrBox.style.display = "none";
       coopRefreshPanel();
     }
 
@@ -5089,34 +5104,31 @@
       const hasRemote = !!coopGetRemoteSignal();
       roleRow.style.display = coop.role ? "none" : "grid";
       actionRow.style.display = coop.role ? "grid" : "none";
-      scanButton.style.display = coop.role ? "" : "none";
-      useButton.style.display = coop.role ? "" : "none";
-      qrButton.style.display = hasLocal ? "" : "none";
+      scanButton.style.display = coop.role === "guest" && !hasLocal ? "" : "none";
+      useButton.style.display = coop.role === "host" ? "" : "none";
+      qrButton.style.display = coop.role === "host" && hasLocal && coop.codeView === "local" ? "" : "none";
       copyRow.style.display = hasLocal && coop.codeView === "local" ? "flex" : "none";
       if (!coop.role) {
-        codeLabel.textContent = "CHOOSE HOST OR GUEST";
-        help.textContent = "PC: HOST. Phone: GUEST.";
+        codeLabel.textContent = "HOST OR GUEST";
+        help.textContent = "PC uses HOST. Phone uses GUEST.";
       } else if (coop.role === "host") {
-        scanButton.textContent = "SCAN GUEST QR";
-        useButton.textContent = "USE GUEST CODE";
-        qrButton.textContent = "SHOW HOST QR";
+        useButton.textContent = coop.codeView === "local" ? "ENTER GUEST CODE" : "CONNECT";
+        qrButton.textContent = "HOST QR";
         if (coop.codeView === "local") {
-          codeLabel.textContent = "HOST CODE - SHOW THIS QR TO GUEST";
-          help.textContent = "Waiting for guest. Host cannot know the guest started until the guest code/QR comes back.";
+          codeLabel.textContent = "HOST QR - SHOW TO GUEST";
+          help.textContent = "Guest scans this. Then enter the guest code here to finish.";
         } else {
-          codeLabel.textContent = "GUEST CODE - PRESS USE GUEST CODE";
-          help.textContent = "Guest answer code is ready. Press USE GUEST CODE to finish connection.";
+          codeLabel.textContent = hasRemote ? "GUEST CODE - PRESS CONNECT" : "PASTE GUEST CODE";
+          help.textContent = "Paste the code from the guest phone, then press CONNECT.";
         }
       } else {
-        scanButton.textContent = "SCAN HOST QR";
-        useButton.textContent = "USE HOST CODE";
-        qrButton.textContent = "SHOW GUEST QR";
+        scanButton.textContent = coop.scannedOfferReady && !hasLocal ? "CONNECT" : "SCAN";
         if (coop.codeView === "local") {
-          codeLabel.textContent = "GUEST CODE - SEND THIS QR BACK TO HOST";
-          help.textContent = "Show this QR to the host PC, or copy the code to the host.";
+          codeLabel.textContent = "GUEST CODE - ENTER ON HOST";
+          help.textContent = "Send or type this code into the host PC.";
         } else {
-          codeLabel.textContent = "HOST CODE - SCAN OR PASTE THEN USE";
-          help.textContent = "Scan host QR first, then press USE HOST CODE.";
+          codeLabel.textContent = coop.scannedOfferReady ? "HOST CODE READY - PRESS CONNECT" : "SCAN HOST QR";
+          help.textContent = coop.scannedOfferReady ? "Press CONNECT to create your guest code." : "Scan the host QR.";
         }
       }
     }
@@ -5155,7 +5167,7 @@
         '<button id="coop-use" type="button">USE CODE</button>' +
         '<button id="coop-qr-toggle" type="button">SHOW QR</button>' +
         '<button id="coop-disconnect" type="button">RESET</button></div>' +
-        '<label id="coop-code-label" style="display:block;margin:6px 0 3px">CHOOSE HOST OR GUEST</label>' +
+        '<label id="coop-code-label" style="display:block;margin:6px 0 3px">HOST OR GUEST</label>' +
         '<textarea id="coop-code" style="width:100%;height:76px;box-sizing:border-box;background:#101722;color:#dcecff;border:1px solid #33485e;font-size:11px"></textarea>' +
         '<textarea id="coop-local" readonly style="display:none"></textarea>' +
         '<textarea id="coop-remote" style="display:none"></textarea>' +
@@ -5176,7 +5188,7 @@
       document.getElementById("coop-guest").onclick = () => coopChooseGuest();
       document.getElementById("coop-use").onclick = () => coopUseRemoteCode(document.getElementById("coop-code").value);
       document.getElementById("coop-disconnect").onclick = () => coopDisconnect();
-      document.getElementById("coop-scan").onclick = () => coopStartQrScan();
+      document.getElementById("coop-scan").onclick = () => coopPrimaryScanAction();
       document.getElementById("coop-copy").onclick = () => coopCopyLocalSignal();
       document.getElementById("coop-qr-toggle").onclick = () => coopToggleQr();
       document.getElementById("coop-copy-qr").onclick = () => coopCopyQrImage();
@@ -5209,6 +5221,7 @@
     function coopApplyRemoteSignal(text) {
       ensureCoopPanel();
       document.getElementById("coop-remote").value = text;
+      coop.scannedOfferReady = false;
       coopShowRemoteCode();
     }
 
@@ -5458,9 +5471,10 @@
       try {
         const signal = await coopUnpackSignal(text);
         if (signal.type === "offer") {
-          setCoopStatus("HOST CODE READY - PRESS USE");
+          coop.scannedOfferReady = true;
+          setCoopStatus("HOST QR SCANNED");
         } else if (signal.type === "answer") {
-          setCoopStatus("GUEST CODE READY - PRESS USE");
+          setCoopStatus("GUEST CODE READY");
         } else {
           setCoopStatus("QR PASTED");
         }
@@ -5511,7 +5525,7 @@
           return;
         }
         if (coop.exchanging && (pc.connectionState === "failed" || pc.connectionState === "disconnected")) {
-          setCoopStatus(coop.role === "guest" ? "SEND GUEST CODE" : "WAIT GUEST CODE");
+          setCoopStatus(coop.role === "guest" ? "GUEST CODE READY" : "WAIT GUEST CODE");
           return;
         }
         setCoopStatus(pc.connectionState.toUpperCase());
@@ -5596,6 +5610,9 @@
         await coopWaitIce(pc);
         await coopSetLocalDescriptionSignal(pc.localDescription);
         coopShowLocalCode();
+        const qrBox = document.getElementById("coop-qr-box");
+        if (qrBox) qrBox.style.display = "block";
+        updateCoopQr();
         setCoopStatus("WAITING FOR GUEST CODE");
       } catch (err) {
         setCoopStatus("ERROR");
@@ -5614,8 +5631,9 @@
         await pc.setLocalDescription(await pc.createAnswer());
         await coopWaitIce(pc);
         await coopSetLocalDescriptionSignal(pc.localDescription);
+        coop.scannedOfferReady = false;
         coopShowLocalCode();
-        setCoopStatus("SEND GUEST CODE");
+        setCoopStatus("GUEST CODE READY");
       } catch (err) {
         setCoopStatus("ERROR");
         console.error(err);
@@ -5645,6 +5663,7 @@
       coop.connected = false;
       coop.exchanging = false;
       coop.codeView = "remote";
+      coop.scannedOfferReady = false;
       if (coopPanel) {
         const local = document.getElementById("coop-local");
         const remote = document.getElementById("coop-remote");
