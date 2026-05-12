@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.7";
-    const BUILD_TIMESTAMP = "2026-05-12 21:17:00 KST";
+    const BUILD_VERSION = "2.1.8";
+    const BUILD_TIMESTAMP = "2026-05-12 21:27:19 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -119,6 +119,7 @@
     let coopSendTimer = 0;
     let coopScanStream = null;
     let coopScanFrame = 0;
+    let coopPanelPollTimer = 0;
     const coop = {
       pc: null,
       channel: null,
@@ -5111,6 +5112,18 @@
       }
     }
 
+    function coopPollPanelInput() {
+      if (!coopPanel || coopPanel.style.display === "none") return;
+      const prevReady = coop.scannedOfferReady;
+      const prevRemote = document.getElementById("coop-remote") ? document.getElementById("coop-remote").value : "";
+      coopSyncManualCodeInput();
+      const nextRemote = document.getElementById("coop-remote") ? document.getElementById("coop-remote").value : "";
+      if (prevReady !== coop.scannedOfferReady || prevRemote !== nextRemote) {
+        if (coop.role === "guest" && !coopGetLocalSignal()) setCoopStatus(coop.scannedOfferReady ? "HOST CODE READY" : "SCAN HOST QR");
+        else coopRefreshPanel();
+      }
+    }
+
     function coopRefreshPanel() {
       if (!coopPanel) return;
       coopSyncManualCodeInput();
@@ -5231,6 +5244,7 @@
       for (const eventName of ["input", "change", "keyup", "paste", "drop"]) {
         codeNode.addEventListener(eventName, () => setTimeout(handleCodeEdit, 0));
       }
+      if (!coopPanelPollTimer) coopPanelPollTimer = setInterval(coopPollPanelInput, 120);
       coopRefreshPanel();
     }
 
