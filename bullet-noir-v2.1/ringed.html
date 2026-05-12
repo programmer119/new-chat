@@ -53,6 +53,9 @@
     const canvas = document.getElementById("game");
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
+    const BUILD_KIND = "NETWORK VERSION";
+    const BUILD_VERSION = "2.1.1";
+    const BUILD_TIMESTAMP = "2026-05-12 20:16:39 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -3232,6 +3235,7 @@
         ctx.font = "600 " + Math.round(Math.min(15, Math.max(12, width * 0.022))) + "px Arial";
         ctx.fillStyle = "rgba(170, 174, 172, 0.78)";
         ctx.fillText("sound enabled intro", width / 2, height * 0.7 + 30);
+        drawBuildInfo(1);
         ctx.restore();
         return;
       }
@@ -3268,7 +3272,22 @@
         ctx.fillText("2026", centerX, baseY + size * 1.05);
         ctx.globalAlpha = 1;
       }
+      drawBuildInfo(fadeOut);
       if (dissolve > 0) drawDissolveGrain(dissolve);
+      ctx.restore();
+    }
+
+    function drawBuildInfo(alpha = 1) {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, alpha)) * 0.86;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillStyle = "rgba(220, 224, 218, 0.82)";
+      ctx.font = "800 " + Math.round(Math.min(16, Math.max(11, width * 0.019))) + "px Arial";
+      ctx.fillText(BUILD_KIND + "  v" + BUILD_VERSION, width / 2, height - 42);
+      ctx.fillStyle = "rgba(156, 164, 160, 0.78)";
+      ctx.font = "700 " + Math.round(Math.min(13, Math.max(10, width * 0.015))) + "px Arial";
+      ctx.fillText("BUILD " + BUILD_TIMESTAMP, width / 2, height - 24);
       ctx.restore();
     }
 
