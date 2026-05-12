@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.14";
-    const BUILD_TIMESTAMP = "2026-05-13 00:36:18 KST";
+    const BUILD_VERSION = "2.1.15";
+    const BUILD_TIMESTAMP = "2026-05-13 00:44:15 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -5136,6 +5136,11 @@
       if (coop.role === "host" && (/^FAILED\b/.test(coop.status) || /^TURN RELAY FAIL\b/.test(coop.status) || coop.lastError)) {
         return coopStartRelayRetry();
       }
+      if (coop.role === "guest" && (/^FAILED\b/.test(coop.status) || /^TURN RELAY FAIL\b/.test(coop.status) || coop.lastError)) {
+        coop.relayMode = true;
+        coopToast("RELAY GUEST CODE CREATING");
+        return coopUseRemoteCode(coopGetRemoteSignal());
+      }
       return coopUseRemoteCode(document.getElementById("coop-code").value);
     }
 
@@ -5220,7 +5225,7 @@
       roleRow.style.display = coop.role ? "none" : "grid";
       actionRow.style.display = coop.role ? "grid" : "none";
       scanButton.style.display = coop.role === "guest" && !hasLocal ? "" : "none";
-      useButton.style.display = coop.role === "host" ? "" : "none";
+      useButton.style.display = coop.role === "host" || (coop.role === "guest" && failed && hasRemote) ? "" : "none";
       qrButton.style.display = hasLocal && coop.codeView === "local" ? "" : "none";
       copyRow.style.display = hasLocal && coop.codeView === "local" ? "flex" : "none";
       if (!coop.role) {
@@ -5241,10 +5246,11 @@
         }
       } else {
         qrButton.textContent = qrOpen ? "HIDE GUEST QR" : "SHOW GUEST QR";
+        useButton.textContent = failed && hasRemote ? "RETRY RELAY" : "CONNECT";
         scanButton.textContent = (coop.scannedOfferReady || hasRemote) && !hasLocal ? "CONNECT" : "SCAN";
         if (failed) {
           codeLabel.textContent = "CONNECTION FAILED";
-          help.textContent = /^NO_RELAY/.test(coop.lastError || "") ? "TURN relay candidate was not created. This browser/network cannot reach the free relay server. Try RESET; if it repeats, a real TURN server is required." : hasLocal ? "This guest code is valid, but the host and guest could not connect through the network. Try RESET." : "Host code was read, but WebRTC could not make a network path. Try RESET.";
+          help.textContent = /^NO_RELAY/.test(coop.lastError || "") ? "TURN relay candidate was not created. This browser/network cannot reach the free relay server. Try RESET; if it repeats, a real TURN server is required." : hasRemote ? "Direct network failed. Press RETRY RELAY, show the new guest QR to the host, then host presses CONNECT." : "Host code was read, but WebRTC could not make a network path. Try RESET.";
         } else if (coop.codeView === "local") {
           codeLabel.textContent = "GUEST CODE - ENTER ON HOST";
           help.textContent = "Send or type this code into the host PC.";
@@ -5935,10 +5941,11 @@
       try {
         ensureCoopPanel();
         setCoopStatus("JOINING");
+        const offer = await coopUnpackSignal(offerText || coopGetRemoteSignal());
+        coop.relayMode = coop.relayMode || /(^|\+)relay($|\+)/.test(coopCandidateTypes(offer) || "");
         const pc = coopCreatePeer();
         coop.role = "guest";
         coop.exchanging = true;
-        const offer = await coopUnpackSignal(offerText || coopGetRemoteSignal());
         coopSetCandidateInfo("remote", offer);
         await pc.setRemoteDescription(offer);
         await pc.setLocalDescription(await pc.createAnswer());
