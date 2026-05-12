@@ -136,8 +136,10 @@
     };
     let audioReady = false;
     let audioCtx = null;
+    let audioMasterGain = null;
     let noirGain = null;
     let noirPulseTimer = null;
+    const APP_AUDIO_MASTER_VOLUME = 0.22;
     const audioBuffers = {};
     const noiseBuffers = {};
     const audioSampleSources = {
@@ -335,6 +337,21 @@
       unlockAudio();
     }
 
+    function getAudioOutput() {
+      if (!audioCtx) return null;
+      if (!audioMasterGain) {
+        audioMasterGain = audioCtx.createGain();
+        audioMasterGain.gain.setValueAtTime(APP_AUDIO_MASTER_VOLUME, audioCtx.currentTime);
+        audioMasterGain.connect(audioCtx.destination);
+      }
+      return audioMasterGain;
+    }
+
+    function connectAudioOutput(node) {
+      const output = getAudioOutput();
+      if (output) node.connect(output);
+    }
+
     function startVoiceCommands() {
       if (voiceRecognitionStarted) return;
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -470,7 +487,7 @@
         master.gain.setValueAtTime(0.0001, now);
         master.gain.exponentialRampToValueAtTime(0.24, now + 0.035);
         master.gain.exponentialRampToValueAtTime(0.0001, now + 0.66);
-        master.connect(audioCtx.destination);
+        connectAudioOutput(master);
 
         const syllables = [
           { t: 0.00, f: 118, e: 82, d: 0.18 },
@@ -518,7 +535,7 @@
     function makeAudio(src, volume) {
       const audio = new Audio(src);
       audio.preload = "auto";
-      audio.volume = volume;
+      audio.volume = Math.max(0, Math.min(1, volume * APP_AUDIO_MASTER_VOLUME));
       return audio;
     }
 
@@ -566,7 +583,7 @@
         const volume = name === "playerGun" ? 0.32 : name === "enemyGun" ? 0.24 : name === "death" ? 0.22 : 0.14;
         gain.gain.setValueAtTime(volume, audioCtx.currentTime);
         source.connect(gain);
-        gain.connect(audioCtx.destination);
+        connectAudioOutput(gain);
         source.start(audioCtx.currentTime);
         return true;
       } catch (error) {
@@ -606,7 +623,7 @@
       gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, end), now + duration);
       source.connect(filter);
       filter.connect(gain);
-      gain.connect(audioCtx.destination);
+      connectAudioOutput(gain);
       source.start(now + start);
       source.stop(now + start + duration);
     }
@@ -623,7 +640,7 @@
       gain.gain.exponentialRampToValueAtTime(volume, now + 0.01);
       gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
       osc.connect(gain);
-      gain.connect(audioCtx.destination);
+      connectAudioOutput(gain);
       osc.start(now);
       osc.stop(now + duration + 0.02);
     }
@@ -722,7 +739,7 @@
         gain.gain.exponentialRampToValueAtTime(volume, now + 0.01);
         gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
         osc.connect(gain);
-        gain.connect(audioCtx.destination);
+        connectAudioOutput(gain);
         osc.start(now);
         osc.stop(now + duration + 0.02);
       } catch (error) {}
@@ -736,7 +753,7 @@
           const gain = audioCtx.createGain();
           gain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
           osc.connect(gain);
-          gain.connect(audioCtx.destination);
+          connectAudioOutput(gain);
           osc.start(audioCtx.currentTime);
           osc.stop(audioCtx.currentTime + 0.03);
         }
@@ -777,7 +794,7 @@
       gain.gain.exponentialRampToValueAtTime(0.055, audioCtx.currentTime + 0.025);
       gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.24);
       osc.connect(gain);
-      gain.connect(audioCtx.destination);
+      connectAudioOutput(gain);
       osc.start();
       osc.stop(audioCtx.currentTime + 0.26);
     }
@@ -823,9 +840,9 @@
         osc.connect(gain);
         grind.connect(grindGain);
         servo.connect(servoGain);
-        gain.connect(audioCtx.destination);
-        grindGain.connect(audioCtx.destination);
-        servoGain.connect(audioCtx.destination);
+        connectAudioOutput(gain);
+        connectAudioOutput(grindGain);
+        connectAudioOutput(servoGain);
         osc.start(now + offset);
         grind.start(now + offset);
         servo.start(now + offset - 0.07);
@@ -843,7 +860,7 @@
           utterance.lang = "ko-KR";
           utterance.rate = 0.82;
           utterance.pitch = 0.45;
-          utterance.volume = 0.9;
+          utterance.volume = 0.35;
           setTimeout(() => window.speechSynthesis.speak(utterance), Math.max(0, (when - audioCtx.currentTime) * 1000));
         }
       } catch (error) {}
@@ -855,7 +872,7 @@
             utterance.lang = "ko-KR";
             utterance.rate = 0.82;
             utterance.pitch = 0.45;
-            utterance.volume = 1;
+            utterance.volume = 0.4;
             window.speechSynthesis.speak(utterance);
           }, Math.max(0, (when - audioCtx.currentTime) * 1000));
         }
@@ -877,8 +894,8 @@
         modGain.gain.value = 0.028;
         mod.connect(modGain);
         osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        modGain.connect(audioCtx.destination);
+        connectAudioOutput(gain);
+        connectAudioOutput(modGain);
         osc.start(when + offset);
         mod.start(when + offset);
         osc.stop(when + offset + 0.24);
@@ -902,7 +919,7 @@
       }
       noirGain = audioCtx.createGain();
       noirGain.gain.setValueAtTime(0.07, audioCtx.currentTime);
-      noirGain.connect(audioCtx.destination);
+      connectAudioOutput(noirGain);
       const notes = [55, 82.41, 110];
       for (const [i, freq] of notes.entries()) {
         const osc = audioCtx.createOscillator();
@@ -934,7 +951,7 @@
         gain.gain.exponentialRampToValueAtTime(0.045, now + 0.04);
         gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
         osc.connect(gain);
-        gain.connect(audioCtx.destination);
+        connectAudioOutput(gain);
         osc.start(now);
         osc.stop(now + 0.58);
       };
