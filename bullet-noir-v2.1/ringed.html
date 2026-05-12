@@ -48,6 +48,7 @@
   <div id="loading">Loading SANG SUB...</div>
 
   <script src="qrcode-generator.js"></script>
+  <script src="jsQR.js"></script>
   <script>
     const canvas = document.getElementById("game");
     const ctx = canvas.getContext("2d");
@@ -113,6 +114,8 @@
     let raidAlarmTimer = 0;
     let coopPanel = null;
     let coopSendTimer = 0;
+    let coopScanStream = null;
+    let coopScanFrame = 0;
     const coop = {
       pc: null,
       channel: null,
@@ -5024,12 +5027,15 @@
         '<button id="coop-host" type="button">HOST OFFER</button>' +
         '<button id="coop-join" type="button">JOIN OFFER</button>' +
         '<button id="coop-accept" type="button">HOST ACCEPT ANSWER</button>' +
-        '<button id="coop-disconnect" type="button">DISCONNECT</button></div>' +
+        '<button id="coop-disconnect" type="button">DISCONNECT</button>' +
+        '<button id="coop-scan" type="button">SCAN QR</button>' +
+        '<button id="coop-stop-scan" type="button">STOP SCAN</button></div>' +
         '<label style="display:block;margin:6px 0 3px">내 신호 복사</label>' +
         '<textarea id="coop-local" readonly style="width:100%;height:94px;box-sizing:border-box;background:#101722;color:#dcecff;border:1px solid #33485e"></textarea>' +
         '<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><button id="coop-copy" type="button">COPY</button><button id="coop-qr-toggle" type="button">QR</button><span id="coop-qr-note" style="color:#b9c5d0">긴 신호는 QR이 안 나올 수 있음</span></div>' +
         '<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><button id="coop-copy-qr" type="button">COPY QR</button><span style="color:#b9c5d0">QR is generated locally.</span></div>' +
         '<div id="coop-qr-box" style="display:none;margin-top:8px;padding:8px;background:#fff;width:max-content;max-width:100%"><img id="coop-qr-img" alt="coop qr" style="display:block;width:180px;height:180px"></div>' +
+        '<div id="coop-scan-box" style="display:none;margin-top:8px"><video id="coop-scan-video" playsinline muted style="width:100%;max-height:240px;background:#000;border:1px solid #405a72"></video><canvas id="coop-scan-canvas" style="display:none"></canvas></div>' +
         '<label style="display:block;margin:8px 0 3px">상대 신호 붙여넣기</label>' +
         '<textarea id="coop-remote" style="width:100%;height:94px;box-sizing:border-box;background:#101722;color:#dcecff;border:1px solid #33485e"></textarea>' +
         '<div style="margin-top:8px;color:#b9c5d0;line-height:1.35">호스트: HOST OFFER -> 복사 전달. 게스트: 붙여넣고 JOIN OFFER -> answer 전달. 호스트: answer 붙여넣고 HOST ACCEPT ANSWER.</div>';
@@ -5046,6 +5052,8 @@
       document.getElementById("coop-join").onclick = () => coopStartJoiner(document.getElementById("coop-remote").value);
       document.getElementById("coop-accept").onclick = () => coopAcceptAnswer(document.getElementById("coop-remote").value);
       document.getElementById("coop-disconnect").onclick = () => coopDisconnect();
+      document.getElementById("coop-scan").onclick = () => coopStartQrScan();
+      document.getElementById("coop-stop-scan").onclick = () => coopStopQrScan();
       document.getElementById("coop-copy").onclick = () => coopCopyLocalSignal();
       document.getElementById("coop-qr-toggle").onclick = () => coopToggleQr();
       document.getElementById("coop-copy-qr").onclick = () => coopCopyQrImage();
@@ -5161,6 +5169,89 @@
           if (coopCopyTextFallback(coopGetLocalSignal())) setCoopStatus("QR COPY FAIL - SIGNAL COPIED");
           else setCoopStatus("QR COPY FAIL");
         }
+      }
+    }
+
+    async function coopStartQrScan() {
+      try {
+        ensureCoopPanel();
+        if (!window.isSecureContext && location.protocol !== "file:") {
+          setCoopStatus("SCAN NEEDS HTTPS");
+          return;
+        }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof jsQR !== "function") {
+          setCoopStatus("SCAN UNSUPPORTED");
+          return;
+        }
+        coopStopQrScan(false);
+        const box = document.getElementById("coop-scan-box");
+        const video = document.getElementById("coop-scan-video");
+        box.style.display = "block";
+        coopScanStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false
+        });
+        video.srcObject = coopScanStream;
+        await video.play();
+        setCoopStatus("SCANNING QR");
+        coopScanFrame = requestAnimationFrame(coopScanTick);
+      } catch (err) {
+        setCoopStatus("SCAN FAIL");
+        console.error(err);
+        coopStopQrScan(false);
+      }
+    }
+
+    function coopStopQrScan(updateStatus = true) {
+      if (coopScanFrame) cancelAnimationFrame(coopScanFrame);
+      coopScanFrame = 0;
+      if (coopScanStream) {
+        for (const track of coopScanStream.getTracks()) track.stop();
+      }
+      coopScanStream = null;
+      const box = document.getElementById("coop-scan-box");
+      const video = document.getElementById("coop-scan-video");
+      if (video) video.srcObject = null;
+      if (box) box.style.display = "none";
+      if (updateStatus) setCoopStatus("SCAN STOPPED");
+    }
+
+    async function coopScanTick() {
+      const video = document.getElementById("coop-scan-video");
+      const canvasNode = document.getElementById("coop-scan-canvas");
+      if (!video || !canvasNode || !coopScanStream) return;
+      if (video.readyState >= 2 && video.videoWidth && video.videoHeight) {
+        canvasNode.width = video.videoWidth;
+        canvasNode.height = video.videoHeight;
+        const scanCtx = canvasNode.getContext("2d", { willReadFrequently: true });
+        scanCtx.drawImage(video, 0, 0, canvasNode.width, canvasNode.height);
+        const image = scanCtx.getImageData(0, 0, canvasNode.width, canvasNode.height);
+        const code = jsQR(image.data, image.width, image.height, { inversionAttempts: "dontInvert" });
+        if (code && code.data) {
+          await coopHandleScannedSignal(code.data);
+          return;
+        }
+      }
+      coopScanFrame = requestAnimationFrame(coopScanTick);
+    }
+
+    async function coopHandleScannedSignal(text) {
+      coopStopQrScan(false);
+      coopApplyRemoteSignal(text);
+      try {
+        const signal = JSON.parse(text);
+        if (signal.type === "offer") {
+          setCoopStatus("QR OFFER FOUND");
+          await coopStartJoiner(text);
+        } else if (signal.type === "answer") {
+          setCoopStatus("QR ANSWER FOUND");
+          await coopAcceptAnswer(text);
+        } else {
+          setCoopStatus("QR PASTED");
+        }
+      } catch (err) {
+        setCoopStatus("QR INVALID");
+        console.error(err);
       }
     }
 
@@ -5289,6 +5380,7 @@
     }
 
     function coopDisconnect(updateStatus = true) {
+      coopStopQrScan(false);
       if (coop.channel) coop.channel.close();
       if (coop.pc) coop.pc.close();
       coop.pc = null;
