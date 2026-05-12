@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.17";
-    const BUILD_TIMESTAMP = "2026-05-13 01:23:27 KST";
+    const BUILD_VERSION = "2.1.18";
+    const BUILD_TIMESTAMP = "2026-05-13 01:35:08 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -123,6 +123,9 @@
     let coopMapTimer = 0;
     let coopPumpHandle = 0;
     let coopPumpLast = 0;
+    let coopShotSeq = 0;
+    let coopSeenRemoteShotSeq = 0;
+    let coopLastShot = null;
     let coopScanStream = null;
     let coopScanFrame = 0;
     let coopPanelPollTimer = 0;
@@ -1630,6 +1633,35 @@
         });
       }
       shake = Math.max(shake, 4);
+      coopRememberShot(sx, sy, hit.x, hit.y);
+    }
+
+    function coopRememberShot(x1, y1, x2, y2) {
+      coopShotSeq++;
+      coopLastShot = { x1, y1, x2, y2, seq: coopShotSeq };
+    }
+
+    function coopGuestFireVisual(aimTarget) {
+      normalizeSelectedWeapon();
+      if (selectedWeapon !== "rifle" || shootCooldown > 0 || rifleReload > 0) return;
+      if (rifleAmmo <= 0) {
+        rifleReload = 3;
+        voiceCommandStatus = "RELOADING";
+        voiceCommandStatusTimer = 1;
+        return;
+      }
+      shootCooldown = 0.11;
+      rifleAmmo--;
+      if (rifleAmmo <= 0) rifleReload = 3;
+      playSfx("playerGun", 0.94 + Math.random() * 0.08);
+      const dx = Math.cos(player.angle);
+      const dy = Math.sin(player.angle);
+      const sx = player.x + dx * 34;
+      const sy = player.y + dy * 34;
+      const hit = raycastShot(sx, sy, dx, dy, Math.min(980, Math.max(70, Math.hypot(aimTarget.x - sx, aimTarget.y - sy))));
+      tracers.push({ x1: sx, y1: sy, x2: hit.x, y2: hit.y, life: 0.09, maxLife: 0.09 });
+      flashes.push({ x: sx + dx * 18, y: sy + dy * 18, angle: player.angle, life: 0.075, maxLife: 0.075 });
+      coopRememberShot(sx, sy, hit.x, hit.y);
     }
 
     function damageProp(prop, amount, x = prop.x, y = prop.y) {
@@ -2144,6 +2176,10 @@
       }
 
       updateCoop(dt);
+      if (coopIsHostWorldClient()) {
+        updateCoopGuestPlayer(dt);
+        return;
+      }
       shootCooldown -= dt;
       bombCooldown -= dt;
       if (rifleReload > 0) {
@@ -2211,26 +2247,8 @@
         player.angle = Math.atan2(aimTarget.y - player.y, aimTarget.x - player.x);
       }
       updateAimRay(aimTarget);
-      if (!coopIsHostWorldClient()) {
-        if (mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice")) fire();
-        if (mouse.right || keys.has("KeyQ")) throwBomb(aimTarget);
-      }
-
-      if (coopIsHostWorldClient()) {
-        for (let i = particles.length - 1; i >= 0; i--) {
-          const p = particles[i];
-          p.x += p.vx * dt;
-          p.y += p.vy * dt;
-          p.life -= dt;
-          p.vx *= Math.pow(0.04, dt);
-          p.vy *= Math.pow(0.04, dt);
-          if (p.life <= 0) particles.splice(i, 1);
-        }
-        for (let i = enemyTracers.length - 1; i >= 0; i--) enemyTracers[i].life = Math.max(0, enemyTracers[i].life - dt);
-        for (let i = flameBursts.length - 1; i >= 0; i--) flameBursts[i].life = Math.max(0, flameBursts[i].life - dt);
-        for (let i = iceStorms.length - 1; i >= 0; i--) iceStorms[i].life = Math.max(0, iceStorms[i].life - dt);
-        return;
-      }
+      if (mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice")) fire();
+      if (mouse.right || keys.has("KeyQ")) throwBomb(aimTarget);
 
       for (let i = bullets.length - 1; i >= 0; i--) {
         const b = bullets[i];
@@ -6079,7 +6097,9 @@
         angle: player.angle,
         hp: player.hp,
         weapon: selectedWeapon,
-        moving: player.isMoving
+        moving: player.isMoving,
+        shotSeq: coopShotSeq,
+        shot: coopLastShot
       }));
       return true;
     }
@@ -6159,6 +6179,18 @@
       coop.remote.hp = Math.max(0, Math.min(100, Number(data.hp) || 0));
       coop.remote.weapon = data.weapon || "rifle";
       coop.remote.moving = !!data.moving;
+      if (Number(data.shotSeq) > coopSeenRemoteShotSeq && data.shot) {
+        coopSeenRemoteShotSeq = Number(data.shotSeq);
+        const shot = data.shot;
+        enemyTracers.push({
+          x1: Number(shot.x1) || x,
+          y1: Number(shot.y1) || y,
+          x2: Number(shot.x2) || x,
+          y2: Number(shot.y2) || y,
+          life: 0.12,
+          maxLife: 0.12
+        });
+      }
     }
 
     function coopLerpRemotePeer(dt) {
@@ -6215,26 +6247,39 @@
     }
 
     function coopApplyHostWorld(data) {
-      if (!data || data.seq <= coop.worldSeq) return;
-      coop.worldSeq = data.seq;
-      coop.worldRecvAt = performance.now();
-      kills = Number.isFinite(data.kills) ? data.kills : kills;
-      wave = Number.isFinite(data.wave) ? data.wave : wave;
-      if (Array.isArray(data.doors)) {
-        for (let i = 0; i < data.doors.length; i++) {
-          if (!doors[i]) doors[i] = { x: data.doors[i].x, y: data.doors[i].y, w: data.doors[i].w, h: data.doors[i].h, axis: data.doors[i].axis || "h", open: 0, target: 0, range: 34 };
-          doors[i].open = Number(data.doors[i].open) || 0;
-          doors[i].target = Number(data.doors[i].target) || 0;
+      try {
+        if (!data || data.seq <= coop.worldSeq) return;
+        coop.worldSeq = data.seq;
+        coop.worldRecvAt = performance.now();
+        if (state !== "play") state = "play";
+        kills = Number.isFinite(data.kills) ? data.kills : kills;
+        wave = Number.isFinite(data.wave) ? data.wave : wave;
+        if (Array.isArray(data.doors)) {
+          while (doors.length > data.doors.length) doors.pop();
+          for (let i = 0; i < data.doors.length; i++) {
+            const incoming = data.doors[i] || {};
+            if (!doors[i]) doors[i] = { x: incoming.x || 0, y: incoming.y || 0, w: incoming.w || 42, h: incoming.h || 42, axis: incoming.axis || "h", open: 0, target: 0, range: 34 };
+            doors[i].x = Number(incoming.x) || doors[i].x || 0;
+            doors[i].y = Number(incoming.y) || doors[i].y || 0;
+            doors[i].w = Number(incoming.w) || doors[i].w || 42;
+            doors[i].h = Number(incoming.h) || doors[i].h || 42;
+            doors[i].axis = incoming.axis || doors[i].axis || "h";
+            doors[i].open = Number(incoming.open) || 0;
+            doors[i].target = Number(incoming.target) || 0;
+          }
         }
+        coopCopyArray(props, data.props);
+        coopCopyArray(pickups, data.pickups);
+        coopCopyArray(bullets, data.bullets);
+        coopCopyArray(bombs, data.bombs);
+        coopCopyArray(enemyTracers, data.enemyTracers);
+        coopCopyArray(flameBursts, data.flameBursts);
+        coopCopyArray(iceStorms, data.iceStorms);
+        coopApplyHostEnemies(data.enemies);
+      } catch (err) {
+        console.warn("Coop world apply failed", err);
+        coopToast("SYNC RECOVERED", false);
       }
-      coopCopyArray(props, data.props);
-      coopCopyArray(pickups, data.pickups);
-      coopCopyArray(bullets, data.bullets);
-      coopCopyArray(bombs, data.bombs);
-      coopCopyArray(enemyTracers, data.enemyTracers);
-      coopCopyArray(flameBursts, data.flameBursts);
-      coopCopyArray(iceStorms, data.iceStorms);
-      coopApplyHostEnemies(data.enemies);
     }
 
     function coopApplyHostEnemies(remoteEnemies) {
@@ -6282,6 +6327,68 @@
         b.x = b.sx + (b.tx - b.sx) * ease;
         b.y = b.sy + (b.ty - b.sy) * ease;
       }
+    }
+
+    function coopUpdateGuestEffects(dt) {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.life -= dt;
+        p.vx *= Math.pow(0.04, dt);
+        p.vy *= Math.pow(0.04, dt);
+        if (p.life <= 0) particles.splice(i, 1);
+      }
+      for (let i = tracers.length - 1; i >= 0; i--) {
+        tracers[i].life -= dt;
+        if (tracers[i].life <= 0) tracers.splice(i, 1);
+      }
+      for (let i = enemyTracers.length - 1; i >= 0; i--) {
+        enemyTracers[i].life -= dt;
+        if (enemyTracers[i].life <= 0) enemyTracers.splice(i, 1);
+      }
+      for (let i = flashes.length - 1; i >= 0; i--) {
+        flashes[i].life -= dt;
+        if (flashes[i].life <= 0) flashes.splice(i, 1);
+      }
+      for (let i = flameBursts.length - 1; i >= 0; i--) flameBursts[i].life = Math.max(0, flameBursts[i].life - dt);
+      for (let i = iceStorms.length - 1; i >= 0; i--) iceStorms[i].life = Math.max(0, iceStorms[i].life - dt);
+    }
+
+    function updateCoopGuestPlayer(dt) {
+      shootCooldown -= dt;
+      bombCooldown -= dt;
+      if (rifleReload > 0) {
+        rifleReload = Math.max(0, rifleReload - dt);
+        if (rifleReload <= 0) rifleAmmo = 60;
+      }
+      player.invuln -= dt;
+      let mx = 0;
+      let my = 0;
+      if (keys.has("KeyW") || keys.has("ArrowUp")) my--;
+      if (keys.has("KeyS") || keys.has("ArrowDown")) my++;
+      if (keys.has("KeyA") || keys.has("ArrowLeft")) mx--;
+      if (keys.has("KeyD") || keys.has("ArrowRight")) mx++;
+      if (isMobile) {
+        mx += mobileControls.moveX;
+        my += mobileControls.moveY;
+      }
+      const mag = Math.hypot(mx, my) || 1;
+      mx /= mag;
+      my /= mag;
+      const beforeX = player.x;
+      const beforeY = player.y;
+      moveCircle(player, mx * 190 * dt, my * 190 * dt);
+      player.moveX = mx;
+      player.moveY = my;
+      player.isMoving = Math.hypot(player.x - beforeX, player.y - beforeY) > 0.35;
+      const aimTarget = currentAimTarget(screenToWorld(mouse.x, mouse.y));
+      player.angle = Math.atan2(aimTarget.y - player.y, aimTarget.x - player.x);
+      updateCamera(dt, isMobile ? mobileAimWorldTarget() : aimTarget);
+      updateAimRay(isMobile ? mobileAimWorldTarget() : aimTarget);
+      if (mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice")) coopGuestFireVisual(isMobile ? mobileAimWorldTarget() : aimTarget);
+      if (isMobile && mobileControls.dodge) mobileControls.dodge = false;
+      coopUpdateGuestEffects(dt);
     }
 
     function coopIsHostWorldClient() {
