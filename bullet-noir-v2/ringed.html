@@ -52,8 +52,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "SINGLE VERSION";
-    const BUILD_VERSION = "2.0.1";
-    const BUILD_TIMESTAMP = "2026-05-12 20:16:39 KST";
+    const BUILD_VERSION = "2.0.2";
+    const BUILD_TIMESTAMP = "2026-05-12 20:55:53 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -3263,12 +3263,13 @@
       ctx.globalAlpha = Math.max(0, Math.min(1, alpha)) * 0.86;
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
+      const bottomPad = Math.max(104, Math.min(136, height * 0.14));
       ctx.fillStyle = "rgba(220, 224, 218, 0.82)";
       ctx.font = "800 " + Math.round(Math.min(16, Math.max(11, width * 0.019))) + "px Arial";
-      ctx.fillText(BUILD_KIND + "  v" + BUILD_VERSION, width / 2, height - 42);
+      ctx.fillText(BUILD_KIND + "  v" + BUILD_VERSION, width / 2, height - bottomPad);
       ctx.fillStyle = "rgba(156, 164, 160, 0.78)";
       ctx.font = "700 " + Math.round(Math.min(13, Math.max(10, width * 0.015))) + "px Arial";
-      ctx.fillText("BUILD " + BUILD_TIMESTAMP, width / 2, height - 24);
+      ctx.fillText("BUILD " + BUILD_TIMESTAMP, width / 2, height - bottomPad + 18);
       ctx.restore();
     }
 

@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.3";
-    const BUILD_TIMESTAMP = "2026-05-12 20:41:20 KST";
+    const BUILD_VERSION = "2.1.4";
+    const BUILD_TIMESTAMP = "2026-05-12 20:55:53 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -3288,12 +3288,13 @@
       ctx.globalAlpha = Math.max(0, Math.min(1, alpha)) * 0.86;
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
+      const bottomPad = Math.max(104, Math.min(136, height * 0.14));
       ctx.fillStyle = "rgba(220, 224, 218, 0.82)";
       ctx.font = "800 " + Math.round(Math.min(16, Math.max(11, width * 0.019))) + "px Arial";
-      ctx.fillText(BUILD_KIND + "  v" + BUILD_VERSION, width / 2, height - 42);
+      ctx.fillText(BUILD_KIND + "  v" + BUILD_VERSION, width / 2, height - bottomPad);
       ctx.fillStyle = "rgba(156, 164, 160, 0.78)";
       ctx.font = "700 " + Math.round(Math.min(13, Math.max(10, width * 0.015))) + "px Arial";
-      ctx.fillText("BUILD " + BUILD_TIMESTAMP, width / 2, height - 24);
+      ctx.fillText("BUILD " + BUILD_TIMESTAMP, width / 2, height - bottomPad + 18);
       ctx.restore();
     }
 
@@ -5535,7 +5536,11 @@
           { urls: "stun:stun.l.google.com:19302" },
           { urls: "stun:stun1.l.google.com:19302" },
           { urls: "stun:stun2.l.google.com:19302" },
-          { urls: "stun:global.stun.twilio.com:3478" }
+          { urls: "stun:global.stun.twilio.com:3478" },
+          { urls: "stun:openrelay.metered.ca:80" },
+          { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+          { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+          { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
         ],
         iceCandidatePoolSize: 8,
         bundlePolicy: "max-bundle",
