@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.24";
-    const BUILD_TIMESTAMP = "2026-05-13 03:09:21 KST";
+    const BUILD_VERSION = "2.1.25";
+    const BUILD_TIMESTAMP = "2026-05-13 03:15:28 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -3054,6 +3054,9 @@
       for (const door of doors) {
         const requestedByPlayer = isInDoorApproach(player, door);
         const holdingPlayer = isInDoorHoldZone(player, door);
+        const remoteCanUseDoor = coop.connected && coop.role === "host" && coop.remote && (coop.remote.hp || 0) > 0;
+        const requestedByRemote = remoteCanUseDoor && isInDoorApproach(coop.remote, door);
+        const holdingRemote = remoteCanUseDoor && isInDoorHoldZone(coop.remote, door);
         let requestedByEnemy = false;
         let holdingEnemy = false;
         for (const e of enemies) {
@@ -3065,8 +3068,8 @@
           }
           if (requestedByEnemy && holdingEnemy) break;
         }
-        const requested = requestedByPlayer || requestedByEnemy;
-        const occupiedWhileOpen = door.open > 0.08 && (holdingPlayer || holdingEnemy);
+        const requested = requestedByPlayer || requestedByRemote || requestedByEnemy;
+        const occupiedWhileOpen = door.open > 0.08 && (holdingPlayer || holdingRemote || holdingEnemy);
         door.target = requested || occupiedWhileOpen ? 1 : 0;
         const rate = door.target ? 9.5 : 5.8;
         door.open += (door.target - door.open) * Math.min(1, dt * rate);
