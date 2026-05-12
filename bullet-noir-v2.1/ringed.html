@@ -54,8 +54,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.12";
-    const BUILD_TIMESTAMP = "2026-05-12 22:28:10 KST";
+    const BUILD_VERSION = "2.1.13";
+    const BUILD_TIMESTAMP = "2026-05-13 00:14:42 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -5182,6 +5182,8 @@
       if (!roleRow || !actionRow || !scanButton || !useButton || !qrButton || !copyRow || !codeLabel || !help || !net) return;
       const hasLocal = !!coopGetLocalSignal();
       const hasRemote = !!coopGetRemoteSignal();
+      const qrBox = document.getElementById("coop-qr-box");
+      const qrOpen = !!qrBox && qrBox.style.display !== "none";
       const failed = /^FAILED\b/.test(coop.status) || /^TURN RELAY FAIL\b/.test(coop.status) || coop.lastError === "PC_FAILED" || coop.lastError === "ICE_FAILED" || /^NO_RELAY/.test(coop.lastError || "");
       roleRow.style.display = coop.role ? "none" : "grid";
       actionRow.style.display = coop.role ? "grid" : "none";
@@ -5194,7 +5196,7 @@
         help.textContent = "PC uses HOST. Phone uses GUEST.";
       } else if (coop.role === "host") {
         useButton.textContent = failed ? "RETRY RELAY" : coop.codeView === "local" ? "ENTER GUEST CODE" : "CONNECT";
-        qrButton.textContent = "HOST QR";
+        qrButton.textContent = qrOpen ? "HIDE HOST QR" : "SHOW HOST QR";
         if (failed) {
           codeLabel.textContent = "CONNECTION FAILED";
           help.textContent = /^NO_RELAY/.test(coop.lastError || "") ? "TURN relay candidate was not created. This browser/network cannot reach the free relay server. Try RESET; if it repeats, a real TURN server is required." : hasRemote ? "Guest code was received, but WebRTC could not make a direct network path. Press RETRY RELAY to create a new host QR using TURN relay." : "Connection failed before the guest code was accepted. Try RESET.";
@@ -5206,7 +5208,7 @@
           help.textContent = "Paste the code from the guest phone, then press CONNECT.";
         }
       } else {
-        qrButton.textContent = "GUEST QR";
+        qrButton.textContent = qrOpen ? "HIDE GUEST QR" : "SHOW GUEST QR";
         scanButton.textContent = (coop.scannedOfferReady || hasRemote) && !hasLocal ? "CONNECT" : "SCAN";
         if (failed) {
           codeLabel.textContent = "CONNECTION FAILED";
@@ -5491,6 +5493,7 @@
       const box = document.getElementById("coop-qr-box");
       box.style.display = box.style.display === "none" ? "block" : "none";
       updateCoopQr();
+      coopRefreshPanel();
     }
 
     function updateCoopQr() {
