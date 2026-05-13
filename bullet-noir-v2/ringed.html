@@ -12,6 +12,7 @@
       margin: 0;
       width: 100%;
       height: 100%;
+      height: 100dvh;
       overflow: hidden;
       background: #050706;
       color: #e8e3d6;
@@ -27,9 +28,20 @@
     canvas {
       display: block;
       width: min(100vw, 56.25vh);
+      width: min(100vw, 56.25dvh);
       height: 100vh;
+      height: 100dvh;
       background: #18270f;
       cursor: crosshair;
+      touch-action: none;
+    }
+
+    @media (orientation: landscape) and (max-height: 620px) {
+      canvas {
+        width: 100vw;
+        height: min(100vh, 56.25vw);
+        height: min(100dvh, 56.25vw);
+      }
     }
 
     #loading {
@@ -52,8 +64,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "SINGLE VERSION";
-    const BUILD_VERSION = "2.0.4";
-    const BUILD_TIMESTAMP = "2026-05-13 09:24:00 KST";
+    const BUILD_VERSION = "2.0.5";
+    const BUILD_TIMESTAMP = "2026-05-13 09:42:00 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -235,6 +247,12 @@
     }
 
     window.addEventListener("resize", resize);
+    if (window.visualViewport) window.visualViewport.addEventListener("resize", resize);
+    window.addEventListener("orientationchange", () => {
+      resize();
+      setTimeout(resize, 80);
+      setTimeout(resize, 260);
+    });
     window.addEventListener("keydown", (event) => {
       keys.add(event.code);
       startVoiceCommands();

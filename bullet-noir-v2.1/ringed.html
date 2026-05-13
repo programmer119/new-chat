@@ -12,6 +12,7 @@
       margin: 0;
       width: 100%;
       height: 100%;
+      height: 100dvh;
       overflow: hidden;
       background: #050706;
       color: #e8e3d6;
@@ -27,9 +28,20 @@
     canvas {
       display: block;
       width: min(100vw, 56.25vh);
+      width: min(100vw, 56.25dvh);
       height: 100vh;
+      height: 100dvh;
       background: #18270f;
       cursor: crosshair;
+      touch-action: none;
+    }
+
+    @media (orientation: landscape) and (max-height: 620px) {
+      canvas {
+        width: 100vw;
+        height: min(100vh, 56.25vw);
+        height: min(100dvh, 56.25vw);
+      }
     }
 
     #loading {
@@ -54,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.27";
-    const BUILD_TIMESTAMP = "2026-05-13 08:42:36 KST";
+    const BUILD_VERSION = "2.1.28";
+    const BUILD_TIMESTAMP = "2026-05-13 09:42:00 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -280,6 +292,12 @@
     }
 
     window.addEventListener("resize", resize);
+    if (window.visualViewport) window.visualViewport.addEventListener("resize", resize);
+    window.addEventListener("orientationchange", () => {
+      resize();
+      setTimeout(resize, 80);
+      setTimeout(resize, 260);
+    });
     window.addEventListener("keydown", (event) => {
       keys.add(event.code);
       startVoiceCommands();
