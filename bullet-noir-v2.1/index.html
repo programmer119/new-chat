@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.36";
-    const BUILD_TIMESTAMP = "2026-05-13 17:15:38 KST";
+    const BUILD_VERSION = "2.1.37";
+    const BUILD_TIMESTAMP = "2026-05-13 20:38:17 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -7598,10 +7598,9 @@
         targetDirX = dragX / dragD;
         targetDirY = dragY / dragD;
       }
-      const snapTurn = !force && dragD > stick.r * 0.8;
-      const response = force ? 0.92 : (d < 14 ? 0.42 : 0.94);
-      let dirX = snapTurn ? targetDirX : (mobileControls.aimDirX || targetDirX) + (targetDirX - (mobileControls.aimDirX || targetDirX)) * response;
-      let dirY = snapTurn ? targetDirY : (mobileControls.aimDirY || targetDirY) + (targetDirY - (mobileControls.aimDirY || targetDirY)) * response;
+      const response = force ? 0.92 : (d < 14 ? 0.42 : 0.72);
+      let dirX = (mobileControls.aimDirX || targetDirX) + (targetDirX - (mobileControls.aimDirX || targetDirX)) * response;
+      let dirY = (mobileControls.aimDirY || targetDirY) + (targetDirY - (mobileControls.aimDirY || targetDirY)) * response;
       const dirD = Math.hypot(dirX, dirY) || 1;
       dirX /= dirD;
       dirY /= dirD;
