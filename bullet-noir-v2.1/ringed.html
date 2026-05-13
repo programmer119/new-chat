@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.30";
-    const BUILD_TIMESTAMP = "2026-05-13 10:20:00 KST";
+    const BUILD_VERSION = "2.1.31";
+    const BUILD_TIMESTAMP = "2026-05-13 10:32:00 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -7121,14 +7121,7 @@
       roundRect(rect.x, rect.y, rect.w, rect.h, 13);
       ctx.fill();
       ctx.stroke();
-      const cooldownProgress = weaponCooldownProgress(selectedWeapon);
-      if (cooldownProgress > 0 && cooldownProgress < 1) {
-        ctx.strokeStyle = "rgba(255, 231, 152, 0.95)";
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.arc(rect.x + rect.w / 2, rect.y + rect.h / 2, Math.max(rect.w, rect.h) * 0.56, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * cooldownProgress);
-        ctx.stroke();
-      }
+      drawRectCooldownGauge(rect, weaponCooldownProgress(selectedWeapon));
       ctx.fillStyle = "#10151b";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
@@ -7170,6 +7163,39 @@
         ctx.scale(0.72, 0.72);
         drawRifle(true);
       }
+      ctx.restore();
+    }
+
+    function drawRectCooldownGauge(rect, progress) {
+      const p = clamp(progress, 0, 1);
+      if (p <= 0 || p >= 1) return;
+      const inset = 3;
+      const x = rect.x + inset;
+      const y = rect.y + inset;
+      const w = rect.w - inset * 2;
+      const h = rect.h - inset * 2;
+      const perimeter = (w + h) * 2;
+      let remain = perimeter * p;
+      ctx.save();
+      ctx.strokeStyle = "rgba(255, 231, 152, 0.96)";
+      ctx.lineWidth = 4;
+      ctx.lineCap = "round";
+      ctx.shadowColor = "rgba(255, 214, 100, 0.65)";
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      function edge(x1, y1, x2, y2, len) {
+        if (remain <= 0) return;
+        const use = Math.min(remain, len);
+        const t = use / len;
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t);
+        remain -= use;
+      }
+      edge(x, y, x + w, y, w);
+      edge(x + w, y, x + w, y + h, h);
+      edge(x + w, y + h, x, y + h, w);
+      edge(x, y + h, x, y, h);
+      ctx.stroke();
       ctx.restore();
     }
 
