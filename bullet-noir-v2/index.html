@@ -52,8 +52,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "SINGLE VERSION";
-    const BUILD_VERSION = "2.0.3";
-    const BUILD_TIMESTAMP = "2026-05-13 08:55:00 KST";
+    const BUILD_VERSION = "2.0.4";
+    const BUILD_TIMESTAMP = "2026-05-13 09:24:00 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -129,6 +129,8 @@
       aimScreenY: 0,
       aimTouchX: 0,
       aimTouchY: 0,
+      aimDirX: 1,
+      aimDirY: 0,
       shoot: false,
       dodge: false,
       weaponTouchId: null,
@@ -296,6 +298,10 @@
     window.addEventListener("touchmove", handleTouchMove, { passive: false });
     window.addEventListener("touchend", handleTouchEnd, { passive: false });
     window.addEventListener("touchcancel", handleTouchEnd, { passive: false });
+    window.addEventListener("pointerdown", ensureAudio, { passive: true });
+    window.addEventListener("visibilitychange", () => {
+      if (!document.hidden && audioReady) ensureAudio();
+    });
 
     function loadImage(src) {
       return new Promise((resolve) => {
@@ -321,8 +327,19 @@
     }
 
     function ensureAudio() {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!audioCtx && Ctx) {
+        try {
+          audioCtx = new Ctx();
+        } catch (error) {}
+      }
+      if (audioCtx && audioCtx.state === "suspended" && audioCtx.resume) {
+        audioCtx.resume().catch(() => {});
+      }
       if (audioReady) {
         if (!noirGain) startNoirBgm();
+        else startNoirPulse();
+        loadAudioBuffers();
         unlockAudio();
         return;
       }
@@ -536,7 +553,7 @@
       const maxSide = Math.max(window.innerWidth || 0, window.innerHeight || 0);
       const compactTouch = minSide <= 980 && maxSide <= 1180;
       const coarse = !window.matchMedia || window.matchMedia("(hover: none), (pointer: coarse), (any-pointer: coarse)").matches;
-      return hasTouch && (compactTouch || coarse);
+      return hasTouch && compactTouch && coarse;
     }
 
     function makeAudio(src, volume) {
@@ -548,22 +565,26 @@
 
     function playSfx(name, rate = 1) {
       unlockAudio();
-      if (isMobile && playProceduralSfx(name, rate)) return;
       const sound = sfx[name];
       if (playBufferSfx(name, rate)) return;
-      if (!sound) return;
+      if (!sound) {
+        playProceduralSfx(name, rate);
+        return;
+      }
       try {
         const clone = sound.cloneNode();
         clone.volume = sound.volume;
         clone.playbackRate = rate;
-        clone.play().catch(() => {});
+        const played = clone.play();
+        if (played && played.catch) played.catch(() => playProceduralSfx(name, rate));
       } catch (error) {
-        // Sound is optional; gameplay should never fail because of audio.
+        playProceduralSfx(name, rate);
       }
     }
 
     function loadAudioBuffers() {
       if (!audioCtx || !window.fetch) return;
+      if (window.location && window.location.protocol === "file:") return;
       for (const [name, src] of Object.entries(audioSampleSources)) {
         if (audioBuffers[name] || audioBuffers[name + "Loading"]) continue;
         audioBuffers[name + "Loading"] = true;
@@ -587,7 +608,7 @@
         const gain = audioCtx.createGain();
         source.buffer = buffer;
         source.playbackRate.value = rate;
-        const volume = name === "playerGun" ? 0.32 : name === "enemyGun" ? 0.24 : name === "death" ? 0.22 : 0.14;
+        const volume = name === "playerGun" ? 0.32 : name === "enemyGun" ? 0.22 : name === "death" ? 0.22 : 0.14;
         gain.gain.setValueAtTime(volume, audioCtx.currentTime);
         source.connect(gain);
         connectAudioOutput(gain);
@@ -935,11 +956,12 @@
         return;
       }
       if (noirGain) {
+        noirGain.gain.setTargetAtTime(0.09, audioCtx.currentTime, 0.08);
         if (!noirPulseTimer) startNoirPulse();
         return;
       }
       noirGain = audioCtx.createGain();
-      noirGain.gain.setValueAtTime(0.07, audioCtx.currentTime);
+      noirGain.gain.setValueAtTime(0.09, audioCtx.currentTime);
       connectAudioOutput(noirGain);
       const notes = [55, 82.41, 110];
       for (const [i, freq] of notes.entries()) {
@@ -1493,6 +1515,14 @@
       return "";
     }
 
+    function weaponCooldownProgress(weapon = selectedWeapon) {
+      if (weapon === "rifle" && rifleReload > 0) return clamp(1 - rifleReload / 3, 0, 1);
+      if (weapon === "bomb" && bombCooldown > 0) return clamp(1 - bombCooldown / 0.72, 0, 1);
+      if (weapon === "flamer" && shootCooldown > 0) return clamp(1 - shootCooldown / 0.08, 0, 1);
+      if (weapon === "ice" && shootCooldown > 0) return clamp(1 - shootCooldown / 0.52, 0, 1);
+      return 0;
+    }
+
     function barricadePlacement() {
       const target = isMobile ? mobileAimWorldTarget() : screenToWorld(mouse.x, mouse.y);
       const dx = target.x - player.x;
@@ -1582,7 +1612,7 @@
       if (hit.enemy) {
         hit.enemy.hp -= 44;
         burst(hit.x, hit.y, "#9f2a24", 5);
-      } else if (hit.prop && hit.prop.type === "crate") {
+      } else if (hit.prop) {
         damageProp(hit.prop, 1, hit.x, hit.y);
       } else if (hit.solid) {
         burst(hit.x, hit.y, "#f4efe8", 5);
@@ -1609,7 +1639,12 @@
     }
 
     function damageProp(prop, amount, x = prop.x, y = prop.y) {
-      if (!prop || prop.type !== "crate") return;
+      if (!prop) return;
+      if (prop.type === "barricade") {
+        damageBarricade(prop, amount, x, y);
+        return;
+      }
+      if (prop.type !== "crate") return;
       ensurePropHealth(prop);
       prop.hp -= amount;
       prop.hitFlash = 0.18;
@@ -1744,7 +1779,7 @@
           burst(enemy.x, enemy.y, "#e46a32", 3);
         }
       }
-      damageBarricadesInCone(sx, sy, dx, dy, reach, 32, 0.16, 1);
+      damagePropsInCone(sx, sy, dx, dy, reach, 32, 0.16, 1);
       shake = Math.max(shake, 2.5);
     }
 
@@ -1787,7 +1822,7 @@
           burst(enemy.x, enemy.y, "#bfefff", 12);
         }
       }
-      damageBarricadesInCone(sx, sy, dx, dy, reach, 18, 0.42, 2);
+      damagePropsInCone(sx, sy, dx, dy, reach, 18, 0.42, 2);
       shake = Math.max(shake, 5);
     }
 
@@ -1857,10 +1892,9 @@
           }
         }
         for (const prop of props.slice()) {
-          if (prop.type !== "barricade") continue;
           const d = Math.hypot(prop.x - bomb.x, prop.y - bomb.y);
           if (d <= radius && hasExplosionLineOfSight(bomb.x, bomb.y, prop.x, prop.y, d)) {
-            damageBarricade(prop, 4, prop.x, prop.y);
+            damageProp(prop, 4, prop.x, prop.y);
           }
         }
         shake = Math.max(shake, 12);
@@ -1874,10 +1908,9 @@
         }
       }
       for (const prop of props.slice()) {
-        if (prop.type !== "barricade") continue;
         const d = Math.hypot(prop.x - bomb.x, prop.y - bomb.y);
         if (d <= radius && hasExplosionLineOfSight(bomb.x, bomb.y, prop.x, prop.y, d)) {
-          damageBarricade(prop, 4, prop.x, prop.y);
+          damageProp(prop, 4, prop.x, prop.y);
         }
       }
       shake = Math.max(shake, 12);
@@ -2275,7 +2308,7 @@
         const hasShotLine = d < 720 && hasLineOfSight(e.x, e.y, player.x, player.y, d, { ignoreBarricades: true });
         if (e.kind === "shooter" && e.shoot <= 0 && d < 620 && hasShotLine) {
           enemyFire(e, dx / d, dy / d);
-          e.shoot = e.fast ? 1.25 + Math.random() * 0.8 : 1.65 + Math.random() * 1.1;
+          e.shoot = e.fast ? 1.55 + Math.random() * 0.9 : 2.05 + Math.random() * 1.15;
         } else if (e.kind === "flamer" && e.shoot <= 0 && d > 72 && d < 285 && hasShotLine) {
           enemyFlame(e, dx / d, dy / d);
           e.shoot = e.fast ? 0.85 + Math.random() * 0.35 : 1.05 + Math.random() * 0.5;
@@ -2384,13 +2417,18 @@
       const target = raycastEnemyShot(sx, sy, dx, dy, Math.hypot(player.x - sx, player.y - sy));
       const px = target.x;
       const py = target.y;
+      const shotLen = Math.min(70, Math.hypot(px - sx, py - sy));
+      const ex = sx + dx * shotLen;
+      const ey = sy + dy * shotLen;
       enemyTracers.push({
         x1: sx,
         y1: sy,
-        x2: px,
-        y2: py,
-        life: 0.12,
-        maxLife: 0.12
+        x2: ex,
+        y2: ey,
+        tx: px,
+        ty: py,
+        life: 0.14,
+        maxLife: 0.14
       });
       if (target.prop && target.prop.type === "barricade") {
         damageBarricade(target.prop, 1, target.x, target.y);
@@ -3192,6 +3230,34 @@
       drawVoiceCommandFlash();
       drawBuildInfo(state === "play" || state === "dead" ? 0.72 : 0.92);
       ctx.restore();
+    }
+
+    function damagePropsInCone(sx, sy, dx, dy, reach, baseWidth, growth, amount) {
+      let damaged = 0;
+      for (const prop of props) {
+        if (prop.type !== "crate" && prop.type !== "barricade") continue;
+        const rect = propCollisionRect(prop);
+        const points = [
+          { x: rect.x, y: rect.y },
+          { x: rect.x + rect.w, y: rect.y },
+          { x: rect.x, y: rect.y + rect.h },
+          { x: rect.x + rect.w, y: rect.y + rect.h },
+          { x: prop.x, y: prop.y }
+        ];
+        for (const point of points) {
+          const px = point.x - sx;
+          const py = point.y - sy;
+          const forward = px * dx + py * dy;
+          if (forward <= 0 || forward > reach + 8) continue;
+          const side = Math.abs(px * dy - py * dx);
+          if (side > baseWidth + forward * growth) continue;
+          if (!hasLineOfSight(sx, sy, point.x, point.y, Math.hypot(px, py), { ignoreBarricades: true })) continue;
+          damageProp(prop, amount, point.x, point.y);
+          damaged++;
+          break;
+        }
+      }
+      return damaged;
     }
 
     function drawVoiceCommandFlash() {
@@ -4031,8 +4097,7 @@
       ctx.translate(player.x, player.y);
       ctx.rotate(player.angle);
       if (player.invuln > 0) ctx.globalAlpha = 0.65 + Math.sin(performance.now() * 0.04) * 0.25;
-      const visualWeapon = selectedWeapon === "flamer" ? "flamer" : "shooter";
-      drawTacticalHuman(24, true, selectedWeapon !== "bomb", visualWeapon);
+      drawTacticalHuman(24, true, selectedWeapon !== "barricade", selectedWeapon);
       ctx.restore();
     }
 
@@ -4266,6 +4331,14 @@
         drawFlamethrower(isPlayer);
         return;
       }
+      if (weaponKind === "bomb") {
+        drawHeldBomb();
+        return;
+      }
+      if (weaponKind === "ice") {
+        drawIceStormGun(isPlayer);
+        return;
+      }
       drawRifle(isPlayer);
     }
 
@@ -4306,6 +4379,35 @@
       ctx.beginPath();
       ctx.moveTo(42, 0);
       ctx.lineTo(50, 0);
+      ctx.stroke();
+    }
+
+    function drawHeldBomb() {
+      ctx.save();
+      ctx.translate(18, 0);
+      ctx.scale(0.86, 0.86);
+      drawBombSprite();
+      ctx.restore();
+    }
+
+    function drawIceStormGun(isPlayer) {
+      ctx.fillStyle = isPlayer ? "rgba(226, 247, 255, 0.96)" : "rgba(180, 228, 244, 0.82)";
+      ctx.strokeStyle = "rgba(5,18,25,0.78)";
+      ctx.lineWidth = 1.4;
+      ctx.fillRect(-5, -4, 30, 8);
+      ctx.strokeRect(-5, -4, 30, 8);
+      ctx.fillStyle = "rgba(122, 216, 255, 0.88)";
+      ctx.beginPath();
+      ctx.ellipse(24, 0, 10, 7, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(232, 252, 255, 0.94)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(33, -3);
+      ctx.lineTo(44, -8);
+      ctx.moveTo(33, 3);
+      ctx.lineTo(44, 8);
       ctx.stroke();
     }
 
@@ -4354,17 +4456,22 @@
       ctx.lineCap = "round";
       for (const tr of enemyTracers) {
         const alpha = Math.max(0, tr.life / tr.maxLife);
-        ctx.strokeStyle = "rgba(255, 86, 54, " + (0.7 * alpha) + ")";
-        ctx.lineWidth = 1.1;
+        const head = 1 - alpha;
+        const x1 = tr.x1 + (tr.x2 - tr.x1) * head * 0.45;
+        const y1 = tr.y1 + (tr.y2 - tr.y1) * head * 0.45;
+        const x2 = tr.x2 + (tr.tx - tr.x2) * head * 0.35;
+        const y2 = tr.y2 + (tr.ty - tr.y2) * head * 0.35;
+        ctx.strokeStyle = "rgba(255, 94, 58, " + (0.62 * alpha) + ")";
+        ctx.lineWidth = 2.2;
         ctx.beginPath();
-        ctx.moveTo(tr.x1, tr.y1);
-        ctx.lineTo(tr.x2, tr.y2);
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
         ctx.stroke();
-        ctx.strokeStyle = "rgba(255, 210, 185, " + (0.24 * alpha) + ")";
-        ctx.lineWidth = 3;
+        ctx.strokeStyle = "rgba(255, 224, 190, " + (0.34 * alpha) + ")";
+        ctx.lineWidth = 0.9;
         ctx.beginPath();
-        ctx.moveTo(tr.x1, tr.y1);
-        ctx.lineTo(tr.x2, tr.y2);
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
         ctx.stroke();
       }
       ctx.restore();
@@ -5132,12 +5239,12 @@
       roundRect(rect.x, rect.y, rect.w, rect.h, 13);
       ctx.fill();
       ctx.stroke();
-      if (dashCharges <= 0 && dashRecharge > 0) {
-        const p = 1 - dashRecharge / 5;
+      const cooldownProgress = weaponCooldownProgress(selectedWeapon);
+      if (cooldownProgress > 0 && cooldownProgress < 1) {
         ctx.strokeStyle = "rgba(255, 231, 152, 0.95)";
         ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.arc(rect.x + rect.w / 2, rect.y + rect.h / 2, Math.max(rect.w, rect.h) * 0.56, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p);
+        ctx.arc(rect.x + rect.w / 2, rect.y + rect.h / 2, Math.max(rect.w, rect.h) * 0.56, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * cooldownProgress);
         ctx.stroke();
       }
       ctx.fillStyle = "#10151b";
@@ -5148,8 +5255,42 @@
       ctx.fillText(name, rect.x + rect.w / 2, rect.y + rect.h / 2 + 8);
       ctx.font = "900 15px Arial";
       ctx.fillText(weaponAmmoText(selectedWeapon), rect.x + rect.w / 2, rect.y + 18);
+      drawWeaponIcon(selectedWeapon, rect.x + rect.w / 2, rect.y + rect.h / 2 - 10, 0.78);
       ctx.fillStyle = "rgba(255,255,255,0.78)";
       ctx.fillRect(rect.x + 9, rect.y + rect.h - 8, rect.w - 18, 2);
+      ctx.restore();
+    }
+
+    function drawWeaponIcon(kind, x, y, s = 1) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(s, s);
+      ctx.rotate(-0.08);
+      if (kind === "bomb") {
+        drawBombSprite();
+      } else if (kind === "flamer") {
+        ctx.scale(0.72, 0.72);
+        drawFlamethrower(true);
+      } else if (kind === "ice") {
+        ctx.scale(0.72, 0.72);
+        drawIceStormGun(true);
+      } else if (kind === "barricade") {
+        ctx.fillStyle = "rgba(215,225,232,0.92)";
+        ctx.strokeStyle = "rgba(10,15,20,0.8)";
+        ctx.lineWidth = 2;
+        roundRect(-22, -8, 44, 16, 3);
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(-14, 7);
+        ctx.lineTo(14, -7);
+        ctx.moveTo(-2, 8);
+        ctx.lineTo(20, -3);
+        ctx.stroke();
+      } else {
+        ctx.scale(0.72, 0.72);
+        drawRifle(true);
+      }
       ctx.restore();
     }
 
@@ -5446,7 +5587,8 @@
       const lastY = hadTouch ? mobileControls.aimTouchY : y;
       const dragX = x - lastX;
       const dragY = y - lastY;
-      if (!force && Math.hypot(dragX, dragY) < 2.5) return;
+      const dragD = Math.hypot(dragX, dragY);
+      if (!force && dragD < 0.12) return;
       const stick = mobileButtonRects().attack;
       const dx = x - stick.x;
       const dy = y - stick.y;
@@ -5457,8 +5599,23 @@
       const ay = (dy / d) * amount;
       mobileControls.aimKnobX = ax;
       mobileControls.aimKnobY = ay;
-      const dirX = Math.abs(dx) + Math.abs(dy) < 8 ? Math.cos(player.angle || 0) : dx / d;
-      const dirY = Math.abs(dx) + Math.abs(dy) < 8 ? Math.sin(player.angle || 0) : dy / d;
+      let targetDirX = mobileControls.aimDirX || Math.cos(player.angle || 0);
+      let targetDirY = mobileControls.aimDirY || Math.sin(player.angle || 0);
+      if (d > 4) {
+        targetDirX = dx / d;
+        targetDirY = dy / d;
+      } else if (dragD > 0.12) {
+        targetDirX = dragX / dragD;
+        targetDirY = dragY / dragD;
+      }
+      const response = force ? 0.92 : (d < 14 ? 0.42 : 0.72);
+      let dirX = (mobileControls.aimDirX || targetDirX) + (targetDirX - (mobileControls.aimDirX || targetDirX)) * response;
+      let dirY = (mobileControls.aimDirY || targetDirY) + (targetDirY - (mobileControls.aimDirY || targetDirY)) * response;
+      const dirD = Math.hypot(dirX, dirY) || 1;
+      dirX /= dirD;
+      dirY /= dirD;
+      mobileControls.aimDirX = dirX;
+      mobileControls.aimDirY = dirY;
       const distance = Math.min(width, height) * 0.36;
       const px = screenX(player.x);
       const py = screenY(player.y);
@@ -6188,6 +6345,22 @@
         shootCooldown = 0;
         fireIceStorm();
         const iceStormFreezesEnemy = enemies[0].freeze > 4.5 && iceStorms.length === 1;
+        props.push({ x: player.x + 82, y: player.y, type: "crate", s: 1, a: 0, hp: 3, maxHp: 3 });
+        const crateHpBeforeIce = props[0].hp;
+        shootCooldown = 0;
+        iceAmmo = 1;
+        selectedWeapon = "ice";
+        fireIceStorm();
+        const iceDamagesCrate = props[0] && props[0].hp < crateHpBeforeIce;
+        props.length = 0;
+        props.push({ x: player.x + 82, y: player.y, type: "crate", s: 1, a: 0, hp: 3, maxHp: 3 });
+        const crateHpBeforeFlame = props[0].hp;
+        shootCooldown = 0;
+        flameAmmo = 1;
+        selectedWeapon = "flamer";
+        firePlayerFlamer();
+        const flamerDamagesCrate = props[0] && props[0].hp < crateHpBeforeFlame;
+        props.length = 0;
         selectedWeapon = "rifle";
         bombCount = 1;
         flameAmmo = 120;
@@ -6251,6 +6424,10 @@
         const attackStickForInstantAim = mobileButtonRects().attack;
         updateMobileAttackStick(attackStickForInstantAim.x, attackStickForInstantAim.y - attackStickForInstantAim.r, true);
         const topAimAngle = Math.atan2(mobileControls.aimY - player.y, mobileControls.aimX - player.x);
+        const aimAngleBeforeTinyMove = topAimAngle;
+        updateMobileAttackStick(attackStickForInstantAim.x + 3, attackStickForInstantAim.y - attackStickForInstantAim.r + 2, false);
+        const aimAngleAfterTinyMove = Math.atan2(mobileControls.aimY - player.y, mobileControls.aimX - player.x);
+        const mobileAimSmallMoveIsSmooth = Math.abs(aimAngleAfterTinyMove - aimAngleBeforeTinyMove) < 0.18;
         updateMobileAttackStick(attackStickForInstantAim.x, attackStickForInstantAim.y + attackStickForInstantAim.r, false);
         const bottomAimAngle = Math.atan2(mobileControls.aimY - player.y, mobileControls.aimX - player.x);
         const mobileAimJoystickRetargetsInstantly = topAimAngle < -1.2 && bottomAimAngle > 1.2;
@@ -6275,6 +6452,7 @@
         mobileControls.shoot = false;
         const synthSfxFallbackAvailable = typeof playSynthSfx === "function";
         const logoSoundUsesWebAudio = typeof playParkLogoSound === "function";
+        const weaponCooldownRingAvailable = weaponCooldownProgress("ice") >= 0 && weaponCooldownProgress("bomb") >= 0;
         state = "intro";
         introTimer = 4.99;
         introStarted = true;
@@ -6342,6 +6520,8 @@
           icePickupAddsCharges,
           enemyDropsAtMostOneItem,
           iceStormFreezesEnemy,
+          iceDamagesCrate,
+          flamerDamagesCrate,
           shortWeaponDragDoesNotSwitch,
           longWeaponDragSwitchesOnRelease,
           dashThreeUsesStartsCooldown,
@@ -6349,11 +6529,13 @@
           mobileSpecialToggleWorks,
           mobileAimCursorActsLikeMouse,
           mobileAimUnaffectedByMoveStick,
+          mobileAimSmallMoveIsSmooth,
           mobileAimJoystickRetargetsInstantly,
           mobileMoveStickDoesNotMoveCursor,
           mobileAimRetargetsAfterCameraMove,
           synthSfxFallbackAvailable,
           logoSoundUsesWebAudio,
+          weaponCooldownRingAvailable,
           introCompletesToMenu
         };
       } finally {
@@ -6415,7 +6597,10 @@
           state,
           version: BUILD_VERSION,
           isMobile,
-          buildInfoBottomPad: buildInfoBottomPad()
+          buildInfoBottomPad: buildInfoBottomPad(),
+          audioReady,
+          audioState: audioCtx ? audioCtx.state : "none",
+          bgmReady: !!noirGain
         };
       }
     };
