@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.28";
-    const BUILD_TIMESTAMP = "2026-05-13 09:42:00 KST";
+    const BUILD_VERSION = "2.1.29";
+    const BUILD_TIMESTAMP = "2026-05-13 09:56:00 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -5250,11 +5250,11 @@
       ctx.textAlign = "left";
       ctx.fillStyle = "rgba(0,0,0,0.42)";
       ctx.fillRect(16, 16, 312, 104);
-      bar(30, 32, 210, 14, player.hp / 100, "#9d2520", "#341410");
+      hpBar(30, 32, 210, 14, player.hp / 100);
       bar(30, 58, 210, 12, player.stamina / 100, "#d8c35f", "#383015");
       ctx.fillStyle = "#eee5d2";
       ctx.font = "700 14px Arial";
-      ctx.fillText("HP", 246, 43);
+      ctx.fillText("HP " + Math.max(0, Math.ceil(player.hp)), 246, 43);
       ctx.fillText("STA", 246, 68);
       ctx.font = "700 18px Arial";
       ctx.fillText("Kills " + kills + "   Wave " + wave, 30, 92);
@@ -7775,6 +7775,25 @@
       ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
     }
 
+    function hpBar(x, y, w, h, value) {
+      const p = clamp(value, 0, 1);
+      ctx.fillStyle = "rgba(18, 7, 7, 0.94)";
+      ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = p > 0.5 ? "#b62a22" : (p > 0.25 ? "#d37628" : "#e0c94b");
+      ctx.fillRect(x, y, Math.max(0, w * p), h);
+      if (p < 1) {
+        ctx.fillStyle = "rgba(0,0,0,0.62)";
+        ctx.fillRect(x + w * p, y, w * (1 - p), h);
+        ctx.strokeStyle = "rgba(255, 240, 210, 0.32)";
+        ctx.beginPath();
+        ctx.moveTo(x + w * p + 0.5, y - 1);
+        ctx.lineTo(x + w * p + 0.5, y + h + 1);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = "rgba(255,255,255,0.34)";
+      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    }
+
     function drawImageCentered(img, x, y, w, h) {
       if (img) {
         const ratio = img.width / img.height;
@@ -8449,6 +8468,10 @@
           },
           doors: doors.map((door) => ({ x: door.x, y: door.y, open: door.open }))
         };
+      },
+      forceHudHp(hp) {
+        state = "play";
+        player.hp = clamp(Number(hp) || 0, 0, 100);
       },
       setPlayer(x, y, angle = player.angle) {
         player.x = x;
