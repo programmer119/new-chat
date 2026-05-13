@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.37";
-    const BUILD_TIMESTAMP = "2026-05-13 20:38:17 KST";
+    const BUILD_VERSION = "2.1.38";
+    const BUILD_TIMESTAMP = "2026-05-13 21:50:51 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -162,6 +162,8 @@
       remoteCandidates: 0,
       localCandidateTypes: "",
       remoteCandidateTypes: "",
+      selectedPathType: "",
+      selectedPathDetail: "",
       relayMode: false,
       busy: false,
       busyText: "",
@@ -5575,18 +5577,18 @@
       }
     }
 
-    function coopChooseHost() {
+    function coopChooseHost(forceRelay = false) {
       coop.role = "host";
-      coop.relayMode = true;
+      coop.relayMode = !!forceRelay;
       coop.codeView = "local";
       coop.scannedOfferReady = false;
       coopRefreshPanel();
       return coopStartHost();
     }
 
-    function coopChooseGuest() {
+    function coopChooseGuest(forceRelay = false) {
       coopDisconnect(false);
-      coop.relayMode = true;
+      coop.relayMode = !!forceRelay;
       coop.role = "guest";
       coop.codeView = "remote";
       coop.scannedOfferReady = false;
@@ -5617,7 +5619,7 @@
     function coopStartRelayRetry() {
       coop.relayMode = true;
       coopToast("RELAY QR CREATING");
-      return coopChooseHost();
+      return coopChooseHost(true);
     }
 
     function coopSetVisibleCode(text, readonly) {
@@ -5730,10 +5732,11 @@
         }
       }
       const types = " / TYPE " + (coop.localCandidateTypes || "-") + ":" + (coop.remoteCandidateTypes || "-");
+      const path = coop.selectedPathType ? " / PATH " + coop.selectedPathType + (coop.selectedPathDetail ? ":" + coop.selectedPathDetail : "") : "";
       const error = coop.lastError ? " / ERR " + coop.lastError : "";
       const mode = "MODE " + (coop.relayMode ? "RELAY" : "DIRECT");
       const role = mode + " / ROLE " + (coop.role || "-") + " / VIEW " + (coop.codeView || "-");
-      net.textContent = role + " / PC " + coop.pcState + " / ICE " + coop.iceState + " / GATHER " + coop.iceGathering + " / CAND " + coop.localCandidates + ":" + coop.remoteCandidates + types + error;
+      net.textContent = role + " / PC " + coop.pcState + " / ICE " + coop.iceState + " / GATHER " + coop.iceGathering + " / CAND " + coop.localCandidates + ":" + coop.remoteCandidates + types + path + error;
       const lockButtons = [hostButton, guestButton, useButton, scanButton, qrButton, copyButton, copyQrButton];
       lockButtons.forEach((button) => {
         if (!button) return;
@@ -6314,6 +6317,16 @@
       ];
     }
 
+    function directIceServers() {
+      return [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:global.stun.twilio.com:3478" },
+        { urls: "stun:openrelay.metered.ca:80" }
+      ];
+    }
+
     async function coopLoadIceServers() {
       if (!meteredIceServersPromise) {
         meteredIceServersPromise = fetch(METERED_TURN_API_URL, { cache: "no-store" })
@@ -6336,7 +6349,7 @@
     async function coopCreatePeer() {
       if (!window.RTCPeerConnection) throw new Error("WebRTC unsupported");
       coopDisconnect(false);
-      const iceServers = await coopLoadIceServers();
+      const iceServers = coop.relayMode ? await coopLoadIceServers() : directIceServers();
       const pc = new RTCPeerConnection({
         iceServers,
         iceCandidatePoolSize: 8,
@@ -6355,6 +6368,7 @@
         if (coop.connected) {
           coop.exchanging = false;
           coop.lastError = "";
+          coopUpdateSelectedPath(pc);
           setCoopStatus("CONNECTED");
           return;
         }
@@ -6388,6 +6402,37 @@
       };
       pc.ondatachannel = (event) => coopAttachChannel(event.channel);
       return pc;
+    }
+
+    async function coopUpdateSelectedPath(pc) {
+      try {
+        if (!pc || typeof pc.getStats !== "function") return;
+        const stats = await pc.getStats();
+        let selectedPair = null;
+        stats.forEach((report) => {
+          if (selectedPair) return;
+          if (report.type === "transport" && report.selectedCandidatePairId) {
+            selectedPair = stats.get(report.selectedCandidatePairId) || null;
+          }
+        });
+        if (!selectedPair) {
+          stats.forEach((report) => {
+            if (selectedPair) return;
+            if (report.type === "candidate-pair" && report.state === "succeeded" && report.nominated) selectedPair = report;
+          });
+        }
+        if (!selectedPair) return;
+        const local = stats.get(selectedPair.localCandidateId);
+        const remote = stats.get(selectedPair.remoteCandidateId);
+        const localType = local && local.candidateType ? local.candidateType : "-";
+        const remoteType = remote && remote.candidateType ? remote.candidateType : "-";
+        const pathType = localType === "relay" || remoteType === "relay" ? "relay" : (localType === "srflx" || remoteType === "srflx" ? "srflx" : "host");
+        coop.selectedPathType = pathType;
+        coop.selectedPathDetail = localType + ">" + remoteType;
+        coopRefreshPanel();
+      } catch (err) {
+        console.warn("Selected path stats failed", err);
+      }
     }
 
     function coopAttachChannel(channel) {
@@ -6531,7 +6576,6 @@
         ensureCoopPanel();
         setCoopStatus("JOINING");
         const offer = await coopUnpackSignal(offerText || coopGetRemoteSignal());
-        coop.relayMode = coop.relayMode || /(^|\+)relay($|\+)/.test(coopCandidateTypes(offer) || "");
         const pc = await coopCreatePeer();
         coop.role = "guest";
         coop.exchanging = true;
@@ -6587,6 +6631,8 @@
       coop.remoteCandidates = 0;
       coop.localCandidateTypes = "";
       coop.remoteCandidateTypes = "";
+      coop.selectedPathType = "";
+      coop.selectedPathDetail = "";
       coop.lastError = "";
       if (updateStatus) {
         coop.busy = false;
@@ -8603,6 +8649,8 @@
         tracers.push({ x1: 9, y1: 9, x2: 10, y2: 10, life: 0.1, maxLife: 0.1, localOnly: true });
         coopCopyArrayPreserveLocal(tracers, [{ x1: 2, y1: 2, x2: 4, y2: 4, life: 0.1, maxLife: 0.1 }]);
         const coopGuestKeepsLocalShotFx = tracers.some((tr) => tr.localOnly) && tracers.some((tr) => !tr.localOnly);
+        const directOnlySkipsTurnServers = directIceServers().every((server) => !String(server.urls || "").startsWith("turn"));
+        const relayModeIncludesTurnServers = fallbackIceServers().some((server) => String(server.urls || "").startsWith("turn"));
         player.x = savedPlayer.x;
         player.y = savedPlayer.y;
         player.collisionR = savedPlayer.collisionR;
@@ -8694,7 +8742,9 @@
           coopHostWorldContinuesWhileDead,
           coopFxPacketsKeepDrawableLengths,
           coopWorldCarriesShotImpacts,
-          coopGuestKeepsLocalShotFx
+          coopGuestKeepsLocalShotFx,
+          directOnlySkipsTurnServers,
+          relayModeIncludesTurnServers
         };
       } finally {
         walls.length = 0;
