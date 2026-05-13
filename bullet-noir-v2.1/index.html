@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.32";
-    const BUILD_TIMESTAMP = "2026-05-13 13:16:43 KST";
+    const BUILD_VERSION = "2.1.33";
+    const BUILD_TIMESTAMP = "2026-05-13 13:36:59 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -1154,9 +1154,43 @@
 
     function startGame() {
       ensureAudio();
+      if (coop.connected && state === "dead") {
+        reviveLocalPlayerWithoutReset();
+        state = "play";
+        startVoiceCommands();
+        return;
+      }
       resetWorld();
       state = "play";
       startVoiceCommands();
+    }
+
+    function reviveLocalPlayerWithoutReset() {
+      player.hp = 100;
+      player.stamina = 100;
+      player.invuln = 1.2;
+      player.dodge = 0;
+      dashCharges = 3;
+      dashRecharge = 0;
+      gameOverTimer = 0;
+      const safe = findNearestFreePoint(player.x, player.y, 240) || { x: player.x, y: player.y };
+      player.x = safe.x;
+      player.y = safe.y;
+      burst(player.x, player.y, "#d8e8ff", 14);
+      if (coop.connected) coopSendNow();
+    }
+
+    function findNearestFreePoint(x, y, radius) {
+      if (!hitsSolid(x, y, player.r)) return { x, y };
+      for (let r = 36; r <= radius; r += 28) {
+        for (let i = 0; i < 16; i++) {
+          const a = (Math.PI * 2 * i) / 16;
+          const px = clamp(x + Math.cos(a) * r, 80, world.w - 80);
+          const py = clamp(y + Math.sin(a) * r, 80, world.h - 80);
+          if (!hitsSolid(px, py, player.r)) return { x: px, y: py };
+        }
+      }
+      return null;
     }
 
     function goMainMenu() {
@@ -1710,6 +1744,8 @@
         burst(hit.x, hit.y, "#9f2a24", 5);
       } else if (hit.prop && hit.prop.type === "crate") {
         damageProp(hit.prop, 1, hit.x, hit.y);
+      } else if (hit.prop && hit.prop.type === "barricade") {
+        damageBarricade(hit.prop, 1, hit.x, hit.y);
       } else if (hit.solid) {
         burst(hit.x, hit.y, "#f4efe8", 5);
       }
@@ -1815,6 +1851,10 @@
         burst(hit.x, hit.y, "#9f2a24", 5);
       } else if (hit.prop && hit.prop.type === "crate") {
         damageProp(hit.prop, 1, hit.x, hit.y);
+      } else if (hit.prop && hit.prop.type === "barricade") {
+        damageBarricade(hit.prop, 1, hit.x, hit.y);
+      } else if (hit.solid) {
+        burst(hit.x, hit.y, "#f4efe8", 5);
       }
     }
 
@@ -2463,7 +2503,8 @@
         mapTool.statusTime = Math.max(0, mapTool.statusTime - dt);
         return;
       }
-      if (state !== "play") {
+      const hostWorldContinuesWhileDead = state === "dead" && coop.connected && coop.role === "host";
+      if (state !== "play" && !hostWorldContinuesWhileDead) {
         gameOverTimer += dt;
         return;
       }
@@ -2493,6 +2534,7 @@
       }
       wave = 1 + Math.floor(kills / 12);
 
+      const localPlayerDead = player.hp <= 0 || state === "dead";
       let mx = 0;
       let my = 0;
       if (keys.has("KeyW") || keys.has("ArrowUp")) my--;
@@ -2503,6 +2545,10 @@
         mx += mobileControls.moveX;
         my += mobileControls.moveY;
       }
+      if (localPlayerDead) {
+        mx = 0;
+        my = 0;
+      }
       const mag = Math.hypot(mx, my) || 1;
       mx /= mag;
       my /= mag;
@@ -2511,7 +2557,7 @@
       let speed = sprint && player.stamina > 0 ? 285 : 190;
       if (sprint && (mx || my)) player.stamina = Math.max(0, player.stamina - dt * 35);
       else player.stamina = Math.min(100, player.stamina + dt * 22);
-      const wantsDash = keys.has("Space") || (isMobile && mobileControls.dodge);
+      const wantsDash = !localPlayerDead && (keys.has("Space") || (isMobile && mobileControls.dodge));
       if (wantsDash && dashCharges > 0 && player.dodge <= 0 && (mx || my)) {
         player.dodge = 0.22;
         player.invuln = 0.28;
@@ -2540,8 +2586,8 @@
         player.angle = Math.atan2(aimTarget.y - player.y, aimTarget.x - player.x);
       }
       updateAimRay(aimTarget);
-      if (mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice")) fire();
-      if (mouse.right || keys.has("KeyQ")) throwBomb(aimTarget);
+      if (!localPlayerDead && (mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice"))) fire();
+      if (!localPlayerDead && (mouse.right || keys.has("KeyQ"))) throwBomb(aimTarget);
 
       for (let i = bullets.length - 1; i >= 0; i--) {
         const b = bullets[i];
@@ -2730,6 +2776,7 @@
     function coopEnemyTarget(enemy) {
       if (!coop.connected || coop.role !== "host" || !coop.remote) return player;
       if ((coop.remote.hp || 0) <= 0) return player;
+      if (player.hp <= 0) return coop.remote;
       const dp = dist2(enemy.x, enemy.y, player.x, player.y);
       const dr = dist2(enemy.x, enemy.y, coop.remote.x, coop.remote.y);
       const rd = Math.sqrt(dr);
@@ -5061,6 +5108,13 @@
       drawSoftConeLight(lightCtx, px, py, player.angle, 450 * z, 0.62, mainEnergy * 0.92);
       drawSoftConeLight(lightCtx, px + forward.x * 52 * z, py + forward.y * 52 * z, player.angle, 315 * z, 0.36, mainEnergy * 0.42);
       drawLightTexture(lightCtx, assets.flashlight, beamCenter.x, beamCenter.y, player.angle + Math.PI / 2, 1024 * 0.2 * originalScalePulse * z, 1024 * 0.2 * originalScalePulse * z, mainEnergy * 0.07);
+      const remoteLight = coop.connected && coop.remote && (coop.remote.hp || 0) > 0 ? coopRemoteFlashlightParams(originalScalePulse, originalPosPulse) : null;
+      if (remoteLight) {
+        drawRadialLight(lightCtx, remoteLight.px, remoteLight.py, 18 * z, 220 * z, remoteLight.energy * 1.2);
+        drawSoftConeLight(lightCtx, remoteLight.px, remoteLight.py, remoteLight.angle, 390 * z, 0.56, remoteLight.energy * 0.78);
+        drawSoftConeLight(lightCtx, remoteLight.px + remoteLight.forward.x * 44 * z, remoteLight.py + remoteLight.forward.y * 44 * z, remoteLight.angle, 280 * z, 0.34, remoteLight.energy * 0.34);
+        drawLightTexture(lightCtx, assets.flashlight, remoteLight.beamX, remoteLight.beamY, remoteLight.angle + Math.PI / 2, 1024 * 0.18 * originalScalePulse * z, 1024 * 0.18 * originalScalePulse * z, remoteLight.energy * 0.055);
+      }
       for (const flash of flashes) {
         const alpha = Math.max(0, flash.life / flash.maxLife);
         drawLightTexture(lightCtx, assets.shotLight, screenX(flash.x), screenY(flash.y), flash.angle + Math.PI / 2, 430 * z, 430 * z, alpha * 0.9);
@@ -5080,6 +5134,22 @@
       drawFacility();
       ctx.restore();
       drawVisibleFlashlightGlow(px, py, beamCenter.x, beamCenter.y, player.angle, mainEnergy);
+      if (remoteLight) drawVisibleFlashlightGlow(remoteLight.px, remoteLight.py, remoteLight.beamX, remoteLight.beamY, remoteLight.angle, remoteLight.energy * 0.82);
+    }
+
+    function coopRemoteFlashlightParams(originalScalePulse, originalPosPulse) {
+      const actor = coop.remote;
+      if (!actor) return null;
+      const z = camera.zoom;
+      const angle = Number(actor.angle) || 0;
+      const forward = { x: Math.cos(angle), y: Math.sin(angle) };
+      const side = { x: -Math.sin(angle), y: Math.cos(angle) };
+      const px = screenX(actor.x);
+      const py = screenY(actor.y);
+      const energy = Math.max(0.18, Math.min(1, (actor.hp || 100) / 100)) * 0.82;
+      const beamX = px + (forward.x * 154 + side.x * 4.42135 + side.x * originalPosPulse.x + forward.x * -originalPosPulse.y) * z;
+      const beamY = py + (forward.y * 154 + side.y * 4.42135 + side.y * originalPosPulse.x + forward.y * -originalPosPulse.y) * z;
+      return { px, py, beamX, beamY, angle, forward, energy };
     }
 
     function drawInstalledLights(target) {
@@ -6633,14 +6703,24 @@
       if (Number(data.shotSeq) > coopSeenRemoteShotSeq && data.shot) {
         coopSeenRemoteShotSeq = Number(data.shotSeq);
         const shot = data.shot;
+        const x1 = Number(shot.x1) || x;
+        const y1 = Number(shot.y1) || y;
+        const x2 = Number(shot.x2) || x;
+        const y2 = Number(shot.y2) || y;
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const d = Math.hypot(dx, dy) || 1;
+        const hit = raycastShot(x1, y1, dx / d, dy / d, d);
         enemyTracers.push({
-          x1: Number(shot.x1) || x,
-          y1: Number(shot.y1) || y,
-          x2: Number(shot.x2) || x,
-          y2: Number(shot.y2) || y,
+          x1,
+          y1,
+          x2: hit.x,
+          y2: hit.y,
           life: 0.12,
           maxLife: 0.12
         });
+        flashes.push({ x: x1 + Math.cos(coop.remote.angle || 0) * 14, y: y1 + Math.sin(coop.remote.angle || 0) * 14, angle: coop.remote.angle || 0, life: 0.075, maxLife: 0.075 });
+        if (hit.solid || hit.prop) burst(hit.x, hit.y, "#f4efe8", 5);
       }
     }
 
@@ -7121,7 +7201,6 @@
       roundRect(rect.x, rect.y, rect.w, rect.h, 13);
       ctx.fill();
       ctx.stroke();
-      drawRectCooldownGauge(rect, weaponCooldownProgress(selectedWeapon));
       ctx.fillStyle = "#10151b";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
@@ -7163,39 +7242,6 @@
         ctx.scale(0.72, 0.72);
         drawRifle(true);
       }
-      ctx.restore();
-    }
-
-    function drawRectCooldownGauge(rect, progress) {
-      const p = clamp(progress, 0, 1);
-      if (p <= 0 || p >= 1) return;
-      const inset = 3;
-      const x = rect.x + inset;
-      const y = rect.y + inset;
-      const w = rect.w - inset * 2;
-      const h = rect.h - inset * 2;
-      const perimeter = (w + h) * 2;
-      let remain = perimeter * p;
-      ctx.save();
-      ctx.strokeStyle = "rgba(255, 231, 152, 0.96)";
-      ctx.lineWidth = 4;
-      ctx.lineCap = "round";
-      ctx.shadowColor = "rgba(255, 214, 100, 0.65)";
-      ctx.shadowBlur = 6;
-      ctx.beginPath();
-      function edge(x1, y1, x2, y2, len) {
-        if (remain <= 0) return;
-        const use = Math.min(remain, len);
-        const t = use / len;
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t);
-        remain -= use;
-      }
-      edge(x, y, x + w, y, w);
-      edge(x + w, y, x + w, y + h, h);
-      edge(x + w, y + h, x, y + h, w);
-      edge(x, y + h, x, y, h);
-      ctx.stroke();
       ctx.restore();
     }
 
@@ -8016,6 +8062,7 @@
       const savedIntroSoundStarted = introSoundStarted;
       const savedCamera = { x: camera.x, y: camera.y, zoom: camera.zoom };
       const savedInventory = { selectedWeapon, rifleAmmo, rifleReload, bombCount, flameAmmo, iceAmmo, barricadeCount, itemDropMode, dashCharges, dashRecharge };
+      const savedCoop = { role: coop.role, connected: coop.connected, remote: coop.remote, worldSeq: coop.worldSeq, mapSeq: coop.mapSeq };
       try {
         walls.length = 0;
         doors.length = 0;
@@ -8403,6 +8450,57 @@
           action: { type: "pickup", x: 520, y: 520, pickupType: "heal" }
         });
         const coopRemotePickupRemovesHostPickup = pickups.length === 0;
+        props.length = 0;
+        enemies.length = 0;
+        walls.length = 0;
+        doors.length = 0;
+        tracers.length = 0;
+        particles.length = 0;
+        coop.role = "host";
+        coop.connected = true;
+        coopSeenRemoteShotSeq = 0;
+        props.push({ x: 610, y: 500, type: "crate", s: 1, a: 0, hp: 3, maxHp: 3 });
+        const crateHpBeforeRemoteShot = props[0].hp;
+        coopApplyRemoteShotDamage({
+          shotSeq: 1,
+          shot: { x1: 500, y1: 500, x2: 610, y2: 500 }
+        });
+        const coopGuestRifleDamagesHostCrate = props[0].hp < crateHpBeforeRemoteShot;
+        walls.push({ x: 580, y: 450, w: 42, h: 110 });
+        coop.role = "guest";
+        coop.connected = true;
+        coop.remote = { x: 500, y: 500, hp: 100, angle: 0, r: 24, collisionR: 15, last: performance.now(), weapon: "rifle" };
+        coopSeenRemoteShotSeq = 0;
+        const particlesBeforeRemoteWallShot = particles.length;
+        coopApplyRemotePeerState({
+          x: 500,
+          y: 500,
+          angle: 0,
+          hp: 100,
+          weapon: "rifle",
+          shotSeq: 1,
+          shot: { x1: 534, y1: 500, x2: 580, y2: 500 }
+        });
+        const coopRemoteWallShotShowsImpact = particles.length > particlesBeforeRemoteWallShot;
+        coop.role = "host";
+        coop.connected = true;
+        coop.remote = { x: 700, y: 500, hp: 100, r: 24, collisionR: 15, last: performance.now(), weapon: "rifle" };
+        player.x = 300;
+        player.y = 500;
+        player.hp = 0;
+        state = "dead";
+        const deadHostTargetsRemote = coopEnemyTarget({ x: 620, y: 500 }) === coop.remote;
+        walls.length = 0;
+        walls.push({ x: 111, y: 222, w: 42, h: 84 });
+        startGame();
+        const coopReviveDoesNotResetMap = state === "play" && player.hp === 100 && walls.length === 1 && walls[0].x === 111;
+        coop.connected = true;
+        coop.role = "host";
+        player.hp = 0;
+        state = "dead";
+        const worldSeqBeforeDeadHostUpdate = coop.worldSeq;
+        update(0.03);
+        const coopHostWorldContinuesWhileDead = coop.worldSeq >= worldSeqBeforeDeadHostUpdate;
         flameBursts.length = 0;
         iceStorms.length = 0;
         flameBursts.push({ x: 1, y: 2, angle: 0.3, life: 0.1, maxLife: 0.2, length: 123, spread: 0.34, hostile: false });
@@ -8488,6 +8586,11 @@
           coopRemoteIceFreezesHostEnemy,
           coopRemoteBarricadeCreatesHostProp,
           coopRemotePickupRemovesHostPickup,
+          coopGuestRifleDamagesHostCrate,
+          coopRemoteWallShotShowsImpact,
+          deadHostTargetsRemote,
+          coopReviveDoesNotResetMap,
+          coopHostWorldContinuesWhileDead,
           coopFxPacketsKeepDrawableLengths
         };
       } finally {
@@ -8534,6 +8637,11 @@
         itemDropMode = savedInventory.itemDropMode;
         dashCharges = savedInventory.dashCharges;
         dashRecharge = savedInventory.dashRecharge;
+        coop.role = savedCoop.role;
+        coop.connected = savedCoop.connected;
+        coop.remote = savedCoop.remote;
+        coop.worldSeq = savedCoop.worldSeq;
+        coop.mapSeq = savedCoop.mapSeq;
         mobileControls.weaponTouchId = null;
         mobileControls.weaponDragX = 0;
         mobileControls.weaponReady = false;
