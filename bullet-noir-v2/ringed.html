@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -52,8 +52,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "SINGLE VERSION";
-    const BUILD_VERSION = "2.0.2";
-    const BUILD_TIMESTAMP = "2026-05-12 20:55:53 KST";
+    const BUILD_VERSION = "2.0.3";
+    const BUILD_TIMESTAMP = "2026-05-13 08:55:00 KST";
 
     const assetList = {
       player: "gfx/player.png",
@@ -526,13 +526,17 @@
         if (params.get("mobile") === "1") return true;
         if (params.get("mobile") === "0") return false;
       } catch (error) {}
-      const touchPoints = navigator.maxTouchPoints || navigator.msMaxTouchPoints || 0;
-      if (touchPoints <= 0) return false;
       const ua = navigator.userAgent || "";
       const mobileUa = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(ua);
-      const compactTouch = Math.min(window.innerWidth || 9999, window.innerHeight || 9999) <= 820;
-      const coarse = !window.matchMedia || window.matchMedia("(hover: none) and (pointer: coarse)").matches;
-      return mobileUa && compactTouch && coarse;
+      if (mobileUa) return true;
+      const touchPoints = navigator.maxTouchPoints || navigator.msMaxTouchPoints || 0;
+      const hasTouch = touchPoints > 0;
+      if (!hasTouch) return false;
+      const minSide = Math.min(window.innerWidth || 9999, window.innerHeight || 9999);
+      const maxSide = Math.max(window.innerWidth || 0, window.innerHeight || 0);
+      const compactTouch = minSide <= 980 && maxSide <= 1180;
+      const coarse = !window.matchMedia || window.matchMedia("(hover: none), (pointer: coarse), (any-pointer: coarse)").matches;
+      return hasTouch && (compactTouch || coarse);
     }
 
     function makeAudio(src, volume) {
@@ -859,51 +863,65 @@
     function playParkVoiceCue(when) {
       try {
         if (window.speechSynthesis && window.SpeechSynthesisUtterance) {
-          const utterance = new SpeechSynthesisUtterance("박가");
-          utterance.lang = "ko-KR";
-          utterance.rate = 0.82;
-          utterance.pitch = 0.45;
-          utterance.volume = 0.35;
-          setTimeout(() => window.speechSynthesis.speak(utterance), Math.max(0, (when - audioCtx.currentTime) * 1000));
-        }
-      } catch (error) {}
-      try {
-        if (window.speechSynthesis && window.SpeechSynthesisUtterance) {
           setTimeout(() => {
             window.speechSynthesis.cancel();
-            const utterance = new SpeechSynthesisUtterance("\ubc15\uac00");
+            const utterance = new SpeechSynthesisUtterance("\ud30c\ud06c \ud30c\ubc00\ub9ac\uc544!");
             utterance.lang = "ko-KR";
-            utterance.rate = 0.82;
-            utterance.pitch = 0.45;
-            utterance.volume = 0.4;
+            utterance.rate = 0.76;
+            utterance.pitch = 0.34;
+            utterance.volume = 0.62;
             window.speechSynthesis.speak(utterance);
           }, Math.max(0, (when - audioCtx.currentTime) * 1000));
         }
       } catch (error) {}
-      const syllables = [0, 0.28];
-      for (const [i, offset] of syllables.entries()) {
+      const syllables = [
+        { t: 0.00, f: 118, end: 84, dur: 0.18, peak: 0.16 },
+        { t: 0.22, f: 96, end: 70, dur: 0.2, peak: 0.18 },
+        { t: 0.50, f: 132, end: 88, dur: 0.18, peak: 0.16 },
+        { t: 0.72, f: 108, end: 62, dur: 0.34, peak: 0.22 }
+      ];
+      for (const [i, syllable] of syllables.entries()) {
+        const offset = syllable.t;
         const osc = audioCtx.createOscillator();
+        const sub = audioCtx.createOscillator();
         const mod = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
+        const subGain = audioCtx.createGain();
         const modGain = audioCtx.createGain();
+        const filter = audioCtx.createBiquadFilter();
         osc.type = "sawtooth";
+        sub.type = "square";
         mod.type = "triangle";
-        osc.frequency.setValueAtTime(i === 0 ? 142 : 118, when + offset);
-        osc.frequency.exponentialRampToValueAtTime(i === 0 ? 82 : 74, when + offset + 0.18);
-        mod.frequency.setValueAtTime(i === 0 ? 58 : 46, when + offset);
+        filter.type = "bandpass";
+        filter.frequency.setValueAtTime(280 - i * 18, when + offset);
+        filter.Q.setValueAtTime(1.2, when + offset);
+        osc.frequency.setValueAtTime(syllable.f, when + offset);
+        osc.frequency.exponentialRampToValueAtTime(syllable.end, when + offset + syllable.dur);
+        sub.frequency.setValueAtTime(syllable.f * 0.5, when + offset);
+        sub.frequency.exponentialRampToValueAtTime(syllable.end * 0.5, when + offset + syllable.dur);
+        mod.frequency.setValueAtTime(42 + i * 4, when + offset);
         gain.gain.setValueAtTime(0.0001, when + offset);
-        gain.gain.exponentialRampToValueAtTime(0.11, when + offset + 0.025);
-        gain.gain.exponentialRampToValueAtTime(0.0001, when + offset + 0.22);
-        modGain.gain.value = 0.028;
+        gain.gain.exponentialRampToValueAtTime(syllable.peak, when + offset + 0.026);
+        gain.gain.exponentialRampToValueAtTime(0.0001, when + offset + syllable.dur + 0.08);
+        subGain.gain.setValueAtTime(0.0001, when + offset);
+        subGain.gain.exponentialRampToValueAtTime(syllable.peak * 0.35, when + offset + 0.026);
+        subGain.gain.exponentialRampToValueAtTime(0.0001, when + offset + syllable.dur + 0.08);
+        modGain.gain.value = 0.018;
         mod.connect(modGain);
-        osc.connect(gain);
+        osc.connect(filter);
+        filter.connect(gain);
+        sub.connect(subGain);
         connectAudioOutput(gain);
+        connectAudioOutput(subGain);
         connectAudioOutput(modGain);
         osc.start(when + offset);
+        sub.start(when + offset);
         mod.start(when + offset);
-        osc.stop(when + offset + 0.24);
-        mod.stop(when + offset + 0.24);
+        osc.stop(when + offset + syllable.dur + 0.12);
+        sub.stop(when + offset + syllable.dur + 0.12);
+        mod.stop(when + offset + syllable.dur + 0.12);
       }
+      playNoiseLayer({ duration: 0.38, volume: 0.045, type: "bandpass", frequency: 190, q: 0.9, start: Math.max(0, when - audioCtx.currentTime + 0.05) });
     }
 
     function startNoirBgm() {
@@ -3172,6 +3190,7 @@
         if (state === "dead") drawDeath();
       }
       drawVoiceCommandFlash();
+      drawBuildInfo(state === "play" || state === "dead" ? 0.72 : 0.92);
       ctx.restore();
     }
 
@@ -3216,7 +3235,6 @@
         ctx.font = "600 " + Math.round(Math.min(15, Math.max(12, width * 0.022))) + "px Arial";
         ctx.fillStyle = "rgba(170, 174, 172, 0.78)";
         ctx.fillText("sound enabled intro", width / 2, height * 0.7 + 30);
-        drawBuildInfo(1);
         ctx.restore();
         return;
       }
@@ -3253,9 +3271,13 @@
         ctx.fillText("2026", centerX, baseY + size * 1.05);
         ctx.globalAlpha = 1;
       }
-      drawBuildInfo(fadeOut);
       if (dissolve > 0) drawDissolveGrain(dissolve);
       ctx.restore();
+    }
+
+    function buildInfoBottomPad() {
+      if (isMobile) return Math.max(152, Math.min(218, height * 0.18));
+      return Math.max(30, Math.min(56, height * 0.055));
     }
 
     function drawBuildInfo(alpha = 1) {
@@ -3263,7 +3285,7 @@
       ctx.globalAlpha = Math.max(0, Math.min(1, alpha)) * 0.86;
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
-      const bottomPad = Math.max(104, Math.min(136, height * 0.14));
+      const bottomPad = buildInfoBottomPad();
       ctx.fillStyle = "rgba(220, 224, 218, 0.82)";
       ctx.font = "800 " + Math.round(Math.min(16, Math.max(11, width * 0.019))) + "px Arial";
       ctx.fillText(BUILD_KIND + "  v" + BUILD_VERSION, width / 2, height - bottomPad);
@@ -6387,6 +6409,16 @@
     }
 
     window.__ringedSelfTest = runSelfTests;
+    window.__ringedDebug = {
+      state() {
+        return {
+          state,
+          version: BUILD_VERSION,
+          isMobile,
+          buildInfoBottomPad: buildInfoBottomPad()
+        };
+      }
+    };
 
     function loop(now) {
       const dt = Math.min(0.033, (now - last) / 1000);
