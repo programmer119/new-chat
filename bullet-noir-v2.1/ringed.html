@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.29";
-    const BUILD_TIMESTAMP = "2026-05-13 09:56:00 KST";
+    const BUILD_VERSION = "2.1.30";
+    const BUILD_TIMESTAMP = "2026-05-13 10:20:00 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -201,7 +201,8 @@
     let audioMasterGain = null;
     let noirGain = null;
     let noirPulseTimer = null;
-    const APP_AUDIO_MASTER_VOLUME = 0.22;
+    const APP_AUDIO_MASTER_VOLUME = 0.5;
+    const audioDebug = { ensure: 0, buffer: 0, procedural: 0, html: 0, failed: 0, bgm: 0 };
     const audioBuffers = {};
     const noiseBuffers = {};
     const audioSampleSources = {
@@ -362,6 +363,9 @@
     window.addEventListener("touchmove", handleTouchMove, { passive: false });
     window.addEventListener("touchend", handleTouchEnd, { passive: false });
     window.addEventListener("touchcancel", handleTouchEnd, { passive: false });
+    window.addEventListener("pointerdown", ensureAudio, { passive: true });
+    window.addEventListener("click", ensureAudio, { passive: true });
+    window.addEventListener("keydown", ensureAudio, { passive: true });
 
     function loadImage(src) {
       return new Promise((resolve) => {
@@ -387,8 +391,20 @@
     }
 
     function ensureAudio() {
+      audioDebug.ensure++;
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!audioCtx && Ctx) {
+        try {
+          audioCtx = new Ctx();
+        } catch (error) {}
+      }
+      if (audioCtx && audioCtx.state === "suspended" && audioCtx.resume) {
+        audioCtx.resume().catch(() => {});
+      }
       if (audioReady) {
         if (!noirGain) startNoirBgm();
+        else startNoirPulse();
+        loadAudioBuffers();
         unlockAudio();
         return;
       }
@@ -412,6 +428,8 @@
         audioMasterGain = audioCtx.createGain();
         audioMasterGain.gain.setValueAtTime(APP_AUDIO_MASTER_VOLUME, audioCtx.currentTime);
         audioMasterGain.connect(audioCtx.destination);
+      } else {
+        audioMasterGain.gain.setTargetAtTime(APP_AUDIO_MASTER_VOLUME, audioCtx.currentTime, 0.04);
       }
       return audioMasterGain;
     }
@@ -613,23 +631,33 @@
     }
 
     function playSfx(name, rate = 1) {
+      ensureAudio();
       unlockAudio();
-      if (isMobile && playProceduralSfx(name, rate)) return;
       const sound = sfx[name];
       if (playBufferSfx(name, rate)) return;
-      if (!sound) return;
+      if (!sound) {
+        playProceduralSfx(name, rate);
+        return;
+      }
       try {
         const clone = sound.cloneNode();
         clone.volume = sound.volume;
         clone.playbackRate = rate;
-        clone.play().catch(() => {});
+        const played = clone.play();
+        audioDebug.html++;
+        if (played && played.catch) played.catch(() => {
+          audioDebug.failed++;
+          playProceduralSfx(name, rate);
+        });
       } catch (error) {
-        // Sound is optional; gameplay should never fail because of audio.
+        audioDebug.failed++;
+        playProceduralSfx(name, rate);
       }
     }
 
     function loadAudioBuffers() {
       if (!audioCtx || !window.fetch) return;
+      if (window.location && window.location.protocol === "file:") return;
       for (const [name, src] of Object.entries(audioSampleSources)) {
         if (audioBuffers[name] || audioBuffers[name + "Loading"]) continue;
         audioBuffers[name + "Loading"] = true;
@@ -653,13 +681,15 @@
         const gain = audioCtx.createGain();
         source.buffer = buffer;
         source.playbackRate.value = rate;
-        const volume = name === "playerGun" ? 0.32 : name === "enemyGun" ? 0.24 : name === "death" ? 0.22 : 0.14;
+        const volume = name === "playerGun" ? 0.32 : name === "enemyGun" ? 0.22 : name === "death" ? 0.22 : 0.14;
         gain.gain.setValueAtTime(volume, audioCtx.currentTime);
         source.connect(gain);
         connectAudioOutput(gain);
         source.start(audioCtx.currentTime);
+        audioDebug.buffer++;
         return true;
       } catch (error) {
+        audioDebug.failed++;
         return false;
       }
     }
@@ -729,25 +759,30 @@
           playNoiseLayer({ duration: 0.075, volume: 0.24, type: "bandpass", frequency: 1750 * rate, q: 0.9 });
           playNoiseLayer({ duration: 0.045, volume: 0.12, type: "highpass", frequency: 3200 * rate, q: 0.8 });
           playToneLayer({ type: "square", startFreq: 140 * rate, endFreq: 58 * rate, duration: 0.105, volume: 0.12 });
+          audioDebug.procedural++;
           return true;
         }
         if (name === "enemyGun") {
           playNoiseLayer({ duration: 0.09, volume: 0.18, type: "bandpass", frequency: 1250 * rate, q: 1 });
           playToneLayer({ type: "square", startFreq: 110 * rate, endFreq: 44 * rate, duration: 0.11, volume: 0.09 });
+          audioDebug.procedural++;
           return true;
         }
         if (name === "flamer") {
           playNoiseLayer({ duration: 0.34, volume: 0.2, type: "lowpass", frequency: 520, q: 0.7 });
           playToneLayer({ type: "sawtooth", startFreq: 92 * rate, endFreq: 35, duration: 0.28, volume: 0.09 });
+          audioDebug.procedural++;
           return true;
         }
         if (name === "death") {
           playNoiseLayer({ duration: 0.22, volume: 0.1, type: "bandpass", frequency: 520, q: 1.5 });
           playToneLayer({ type: "triangle", startFreq: 230 * rate, endFreq: 65, duration: 0.36, volume: 0.12 });
+          audioDebug.procedural++;
           return true;
         }
         return false;
       } catch (error) {
+        audioDebug.failed++;
         return false;
       }
     }
@@ -1001,11 +1036,13 @@
         return;
       }
       if (noirGain) {
+        noirGain.gain.setTargetAtTime(0.09, audioCtx.currentTime, 0.08);
         if (!noirPulseTimer) startNoirPulse();
+        audioDebug.bgm++;
         return;
       }
       noirGain = audioCtx.createGain();
-      noirGain.gain.setValueAtTime(0.07, audioCtx.currentTime);
+      noirGain.gain.setValueAtTime(0.12, audioCtx.currentTime);
       connectAudioOutput(noirGain);
       const notes = [55, 82.41, 110];
       for (const [i, freq] of notes.entries()) {
@@ -1019,6 +1056,7 @@
         osc.start();
       }
       startNoirPulse();
+      audioDebug.bgm++;
     }
 
     function startNoirPulse() {
@@ -1557,6 +1595,14 @@
       if (weapon === "ice") return "x" + iceAmmo;
       if (weapon === "barricade") return "x" + barricadeCount;
       return "";
+    }
+
+    function weaponCooldownProgress(weapon = selectedWeapon) {
+      if (weapon === "rifle" && rifleReload > 0) return clamp(1 - rifleReload / 3, 0, 1);
+      if (weapon === "bomb" && bombCooldown > 0) return clamp(1 - bombCooldown / 0.72, 0, 1);
+      if (weapon === "flamer" && shootCooldown > 0) return clamp(1 - shootCooldown / 0.08, 0, 1);
+      if (weapon === "ice" && shootCooldown > 0) return clamp(1 - shootCooldown / 0.52, 0, 1);
+      return 0;
     }
 
     function barricadePlacement() {
@@ -4366,8 +4412,7 @@
       ctx.translate(player.x, player.y);
       ctx.rotate(player.angle);
       if (player.invuln > 0) ctx.globalAlpha = 0.65 + Math.sin(performance.now() * 0.04) * 0.25;
-      const visualWeapon = selectedWeapon === "flamer" ? "flamer" : "shooter";
-      drawTacticalHuman(24, true, selectedWeapon !== "bomb", visualWeapon);
+      drawTacticalHuman(24, true, selectedWeapon !== "barricade", selectedWeapon);
       ctx.restore();
     }
 
@@ -4601,6 +4646,14 @@
         drawFlamethrower(isPlayer);
         return;
       }
+      if (weaponKind === "bomb") {
+        drawHeldBomb();
+        return;
+      }
+      if (weaponKind === "ice") {
+        drawIceStormGun(isPlayer);
+        return;
+      }
       drawRifle(isPlayer);
     }
 
@@ -4641,6 +4694,35 @@
       ctx.beginPath();
       ctx.moveTo(42, 0);
       ctx.lineTo(50, 0);
+      ctx.stroke();
+    }
+
+    function drawHeldBomb() {
+      ctx.save();
+      ctx.translate(18, 0);
+      ctx.scale(0.86, 0.86);
+      drawBombSprite();
+      ctx.restore();
+    }
+
+    function drawIceStormGun(isPlayer) {
+      ctx.fillStyle = isPlayer ? "rgba(226, 247, 255, 0.96)" : "rgba(180, 228, 244, 0.82)";
+      ctx.strokeStyle = "rgba(5,18,25,0.78)";
+      ctx.lineWidth = 1.4;
+      ctx.fillRect(-5, -4, 30, 8);
+      ctx.strokeRect(-5, -4, 30, 8);
+      ctx.fillStyle = "rgba(122, 216, 255, 0.88)";
+      ctx.beginPath();
+      ctx.ellipse(24, 0, 10, 7, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(232, 252, 255, 0.94)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(33, -3);
+      ctx.lineTo(44, -8);
+      ctx.moveTo(33, 3);
+      ctx.lineTo(44, 8);
       ctx.stroke();
     }
 
@@ -7039,24 +7121,55 @@
       roundRect(rect.x, rect.y, rect.w, rect.h, 13);
       ctx.fill();
       ctx.stroke();
-      if (dashCharges <= 0 && dashRecharge > 0) {
-        const p = 1 - dashRecharge / 5;
+      const cooldownProgress = weaponCooldownProgress(selectedWeapon);
+      if (cooldownProgress > 0 && cooldownProgress < 1) {
         ctx.strokeStyle = "rgba(255, 231, 152, 0.95)";
         ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.arc(rect.x + rect.w / 2, rect.y + rect.h / 2, Math.max(rect.w, rect.h) * 0.56, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p);
+        ctx.arc(rect.x + rect.w / 2, rect.y + rect.h / 2, Math.max(rect.w, rect.h) * 0.56, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * cooldownProgress);
         ctx.stroke();
       }
       ctx.fillStyle = "#10151b";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      const name = weaponNames[selectedWeapon];
-      ctx.font = name.length > 5 ? "900 10px Arial" : "900 12px Arial";
-      ctx.fillText(name, rect.x + rect.w / 2, rect.y + rect.h / 2 + 8);
       ctx.font = "900 15px Arial";
       ctx.fillText(weaponAmmoText(selectedWeapon), rect.x + rect.w / 2, rect.y + 18);
+      drawWeaponIcon(selectedWeapon, rect.x + rect.w / 2, rect.y + rect.h / 2 + 2, 0.9);
       ctx.fillStyle = "rgba(255,255,255,0.78)";
       ctx.fillRect(rect.x + 9, rect.y + rect.h - 8, rect.w - 18, 2);
+      ctx.restore();
+    }
+
+    function drawWeaponIcon(kind, x, y, s = 1) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(s, s);
+      ctx.rotate(-0.08);
+      if (kind === "bomb") {
+        drawBombSprite();
+      } else if (kind === "flamer") {
+        ctx.scale(0.72, 0.72);
+        drawFlamethrower(true);
+      } else if (kind === "ice") {
+        ctx.scale(0.72, 0.72);
+        drawIceStormGun(true);
+      } else if (kind === "barricade") {
+        ctx.fillStyle = "rgba(215,225,232,0.92)";
+        ctx.strokeStyle = "rgba(10,15,20,0.8)";
+        ctx.lineWidth = 2;
+        roundRect(-22, -8, 44, 16, 3);
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(-14, 7);
+        ctx.lineTo(14, -7);
+        ctx.moveTo(-2, 8);
+        ctx.lineTo(20, -3);
+        ctx.stroke();
+      } else {
+        ctx.scale(0.72, 0.72);
+        drawRifle(true);
+      }
       ctx.restore();
     }
 
@@ -8453,6 +8566,10 @@
           version: BUILD_VERSION,
           isMobile,
           buildInfoBottomPad: buildInfoBottomPad(),
+          audioReady,
+          audioState: audioCtx ? audioCtx.state : "none",
+          bgmReady: !!noirGain,
+          audioDebug: { ...audioDebug },
           role: coop.role,
           connected: coop.connected,
           remote: coop.remote ? { x: coop.remote.x, y: coop.remote.y, hp: coop.remote.hp, weapon: coop.remote.weapon } : null,
@@ -8472,6 +8589,18 @@
       forceHudHp(hp) {
         state = "play";
         player.hp = clamp(Number(hp) || 0, 0, 100);
+      },
+      soundProbe() {
+        ensureAudio();
+        startNoirBgm();
+        playSfx("playerGun", 1);
+        playSfx("enemyGun", 1);
+        return {
+          audioReady,
+          audioState: audioCtx ? audioCtx.state : "none",
+          bgmReady: !!noirGain,
+          audioDebug: { ...audioDebug }
+        };
       },
       setPlayer(x, y, angle = player.angle) {
         player.x = x;
