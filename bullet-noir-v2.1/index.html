@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.41";
-    const BUILD_TIMESTAMP = "2026-05-14 17:25:48 KST";
+    const BUILD_VERSION = "2.1.42";
+    const BUILD_TIMESTAMP = "2026-05-14 18:11:50 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -156,6 +156,7 @@
       codeView: "remote",
       scannedOfferReady: false,
       hostMode: "",
+      guestClass: "gunner",
       guestSlotCount: 1,
       activeHostSlot: 0,
       hostSlots: [],
@@ -281,6 +282,9 @@
     let barricadeCount = 0;
     let dashCharges = 3;
     let dashRecharge = 0;
+    let healerEnergy = 10;
+    let healerReload = 0;
+    let healerActive = false;
     const lightCanvas = document.createElement("canvas");
     const lightCtx = lightCanvas.getContext("2d");
 
@@ -2041,6 +2045,79 @@
       if (prop.hp <= 0) destroyProp(prop);
     }
 
+    function barricadeLocalPoint(prop, x, y) {
+      const angle = -(Number(prop.a) || 0);
+      const ox = x - prop.x;
+      const oy = y - prop.y;
+      return {
+        x: ox * Math.cos(angle) - oy * Math.sin(angle),
+        y: ox * Math.sin(angle) + oy * Math.cos(angle)
+      };
+    }
+
+    function barricadeWorldPoint(prop, x, y) {
+      const angle = Number(prop.a) || 0;
+      return {
+        x: prop.x + x * Math.cos(angle) - y * Math.sin(angle),
+        y: prop.y + x * Math.sin(angle) + y * Math.cos(angle)
+      };
+    }
+
+    function barricadeCorners(prop) {
+      const w = prop.w || 82;
+      const h = prop.h || 24;
+      return [
+        barricadeWorldPoint(prop, -w / 2, -h / 2),
+        barricadeWorldPoint(prop, w / 2, -h / 2),
+        barricadeWorldPoint(prop, w / 2, h / 2),
+        barricadeWorldPoint(prop, -w / 2, h / 2)
+      ];
+    }
+
+    function circleBarricade(cx, cy, r, prop) {
+      const w = prop.w || 82;
+      const h = prop.h || 24;
+      const local = barricadeLocalPoint(prop, cx, cy);
+      const nx = clamp(local.x, -w / 2, w / 2);
+      const ny = clamp(local.y, -h / 2, h / 2);
+      return dist2(local.x, local.y, nx, ny) < r * r;
+    }
+
+    function closestBarricadePoint(prop, x, y) {
+      const w = prop.w || 82;
+      const h = prop.h || 24;
+      const local = barricadeLocalPoint(prop, x, y);
+      return barricadeWorldPoint(prop, clamp(local.x, -w / 2, w / 2), clamp(local.y, -h / 2, h / 2));
+    }
+
+    function rayBarricade(x, y, dx, dy, prop) {
+      const angle = -(Number(prop.a) || 0);
+      const ox = x - prop.x;
+      const oy = y - prop.y;
+      const localX = ox * Math.cos(angle) - oy * Math.sin(angle);
+      const localY = ox * Math.sin(angle) + oy * Math.cos(angle);
+      const localDx = dx * Math.cos(angle) - dy * Math.sin(angle);
+      const localDy = dx * Math.sin(angle) + dy * Math.cos(angle);
+      const w = prop.w || 82;
+      const h = prop.h || 24;
+      return rayRect(localX, localY, localDx, localDy, { x: -w / 2, y: -h / 2, w, h });
+    }
+
+    function findBlockingBarricadeBetween(source, target) {
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
+      const d = Math.hypot(dx, dy) || 1;
+      let best = null;
+      for (const prop of props) {
+        if (prop.type !== "barricade") continue;
+        const t = rayBarricade(source.x, source.y, dx / d, dy / d, prop);
+        if (t !== null && t > 4 && t < d - 14 && (!best || t < best.t)) {
+          best = { prop, t, x: source.x + dx / d * t, y: source.y + dy / d * t };
+        }
+      }
+      return best;
+    }
+
     function findTouchedBarricade(entity, dx = 0, dy = 0) {
       let best = null;
       let bestD = Infinity;
@@ -2049,14 +2126,12 @@
       const py = entity.y + dy * 8;
       for (const prop of props) {
         if (prop.type !== "barricade") continue;
-        const rect = propCollisionRect(prop);
-        if (!circleRect(px, py, r, rect)) continue;
-        const cx = clamp(px, rect.x, rect.x + rect.w);
-        const cy = clamp(py, rect.y, rect.y + rect.h);
-        const d = dist2(px, py, cx, cy);
+        if (!circleBarricade(px, py, r, prop)) continue;
+        const point = closestBarricadePoint(prop, px, py);
+        const d = dist2(px, py, point.x, point.y);
         if (d < bestD) {
           bestD = d;
-          best = { prop, x: cx, y: cy };
+          best = { prop, x: point.x, y: point.y };
         }
       }
       return best;
@@ -2066,14 +2141,7 @@
       let damaged = 0;
       for (const prop of props) {
         if (prop.type !== "barricade") continue;
-        const rect = propCollisionRect(prop);
-        const corners = [
-          { x: rect.x, y: rect.y },
-          { x: rect.x + rect.w, y: rect.y },
-          { x: rect.x, y: rect.y + rect.h },
-          { x: rect.x + rect.w, y: rect.y + rect.h },
-          { x: prop.x, y: prop.y }
-        ];
+        const corners = [...barricadeCorners(prop), { x: prop.x, y: prop.y }];
         for (const point of corners) {
           const px = point.x - sx;
           const py = point.y - sy;
@@ -2669,7 +2737,9 @@
         const dx = targetPlayer.x - e.x;
         const dy = targetPlayer.y - e.y;
         const d = Math.hypot(dx, dy) || 1;
-        const seesPlayer = e.raidAggressive || (d < 720 && hasLineOfSight(e.x, e.y, targetPlayer.x, targetPlayer.y, d));
+        const blockingBarricade = findBlockingBarricadeBetween(e, targetPlayer);
+        const clearIgnoringBarricade = d < 760 && hasLineOfSight(e.x, e.y, targetPlayer.x, targetPlayer.y, d, { ignoreBarricades: true });
+        const seesPlayer = e.raidAggressive || (d < 720 && (hasLineOfSight(e.x, e.y, targetPlayer.x, targetPlayer.y, d) || (blockingBarricade && clearIgnoringBarricade)));
         if (seesPlayer) {
           e.alert = 5.5;
           e.lastSeenX = targetPlayer.x;
@@ -2686,8 +2756,8 @@
         const sway = Math.sin(e.wobble) * 0.16 * orbitDamping;
         const preferred = e.kind === "shooter" ? 300 : (e.kind === "flamer" ? 230 : contact);
         const keepsRange = e.kind === "shooter" || e.kind === "flamer";
-        const targetX = seesPlayer ? targetPlayer.x : e.lastSeenX;
-        const targetY = seesPlayer ? targetPlayer.y : e.lastSeenY;
+        const targetX = seesPlayer && blockingBarricade ? blockingBarricade.x : (seesPlayer ? targetPlayer.x : e.lastSeenX);
+        const targetY = seesPlayer && blockingBarricade ? blockingBarricade.y : (seesPlayer ? targetPlayer.y : e.lastSeenY);
         const raidPathTarget = e.raidAggressive && targetPlayer === player && !hasLineOfSight(e.x, e.y, player.x, player.y, d) ? raidMoveTarget(e) : null;
         const actualTargetX = raidPathTarget ? raidPathTarget.x : targetX;
         const actualTargetY = raidPathTarget ? raidPathTarget.y : targetY;
@@ -2701,11 +2771,12 @@
         if (!seesPlayer && td < 42) e.alert = Math.min(e.alert, 0.7);
         e.bite -= dt;
         e.shoot -= dt;
+        const attackDistance = blockingBarricade ? Math.max(1, blockingBarricade.t) : d;
         const hasShotLine = d < 720 && hasLineOfSight(e.x, e.y, targetPlayer.x, targetPlayer.y, d, { ignoreBarricades: true });
-        if (e.kind === "shooter" && e.shoot <= 0 && d < 620 && hasShotLine) {
+        if (e.kind === "shooter" && e.shoot <= 0 && attackDistance < 620 && hasShotLine) {
           enemyFire(e, dx / d, dy / d, targetPlayer);
           e.shoot = e.fast ? 1.25 + Math.random() * 0.8 : 1.65 + Math.random() * 1.1;
-        } else if (e.kind === "flamer" && e.shoot <= 0 && d > 72 && d < 285 && hasShotLine) {
+        } else if (e.kind === "flamer" && e.shoot <= 0 && attackDistance > 42 && attackDistance < 285 && hasShotLine) {
           enemyFlame(e, dx / d, dy / d, targetPlayer);
           e.shoot = e.fast ? 0.85 + Math.random() * 0.35 : 1.05 + Math.random() * 0.5;
         }
@@ -3167,8 +3238,7 @@
       let best = { t: maxDist, x: x + dx * maxDist, y: y + dy * maxDist, prop: null };
       for (const prop of props) {
         if (prop.type !== "barricade") continue;
-        const rect = propCollisionRect(prop);
-        const t = rayRect(x, y, dx, dy, rect);
+        const t = rayBarricade(x, y, dx, dy, prop);
         if (t !== null && t > 0 && t < best.t) {
           best = { t, x: x + dx * t, y: y + dy * t, prop };
         }
@@ -3363,11 +3433,11 @@
     function moveCircle(entity, dx, dy) {
       const r = collisionRadius(entity);
       entity.x = clamp(entity.x + dx, r + 6, world.w - r - 6);
-      if (hitsSolid(entity.x, entity.y, r)) {
+      if (hitsSolid(entity.x, entity.y, r, entity)) {
         entity.x = clamp(entity.x - dx, r + 6, world.w - r - 6);
       }
       entity.y = clamp(entity.y + dy, r + 6, world.h - r - 6);
-      if (hitsSolid(entity.x, entity.y, r)) {
+      if (hitsSolid(entity.x, entity.y, r, entity)) {
         entity.y = clamp(entity.y - dy, r + 6, world.h - r - 6);
       }
     }
@@ -3535,7 +3605,7 @@
       return entity.collisionR || entity.r;
     }
 
-    function hitsSolid(x, y, r) {
+    function hitsSolid(x, y, r, entity = null) {
       for (const wall of walls) {
         if (circleRect(x, y, r, wall)) return true;
       }
@@ -3547,7 +3617,11 @@
         }
       }
       for (const prop of props) {
-        if (propBlocksMovement(prop) && circleRect(x, y, r, propCollisionRect(prop))) return true;
+        if (!propBlocksMovement(prop)) continue;
+        if (prop.type === "barricade") {
+          if (entity === player) continue;
+          if (circleBarricade(x, y, r, prop)) return true;
+        } else if (circleRect(x, y, r, propCollisionRect(prop))) return true;
       }
       return false;
     }
@@ -3558,9 +3632,14 @@
 
     function propCollisionRect(prop) {
       if (prop.type === "barricade") {
-        const w = prop.w || 82;
-        const h = prop.h || 24;
-        return { x: prop.x - w / 2, y: prop.y - h / 2, w, h };
+        const corners = barricadeCorners(prop);
+        const xs = corners.map((p) => p.x);
+        const ys = corners.map((p) => p.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
       }
       const size = 34 * (Number(prop.s) || 1);
       return { x: prop.x - size / 2, y: prop.y - size / 2, w: size, h: size };
@@ -4016,6 +4095,7 @@
       drawSpeechBubbles();
       drawPlayer();
       drawRemoteCoopPeer();
+      drawCoopHealLinks();
       drawDashBursts();
       drawParticles();
       drawOriginalFlashlightLayer();
@@ -4500,7 +4580,8 @@
       ctx.translate(player.x, player.y);
       ctx.rotate(player.angle);
       if (player.invuln > 0) ctx.globalAlpha = 0.65 + Math.sin(performance.now() * 0.04) * 0.25;
-      drawTacticalHuman(24, true, selectedWeapon !== "barricade", selectedWeapon);
+      const localWeaponKind = coop.role === "guest" && coop.guestClass === "healer" ? "healer" : selectedWeapon;
+      drawTacticalHuman(24, true, localWeaponKind !== "barricade", localWeaponKind);
       ctx.restore();
     }
 
@@ -4730,6 +4811,29 @@
     }
 
     function drawWeapon(isPlayer, weaponKind) {
+      if (weaponKind === "healer") {
+        ctx.save();
+        ctx.strokeStyle = "rgba(150,255,205,0.94)";
+        ctx.fillStyle = "rgba(190,255,225,0.9)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(-8, 0);
+        ctx.lineTo(18, 0);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(21, 0, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.82)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(21, -8);
+        ctx.lineTo(21, 8);
+        ctx.moveTo(13, 0);
+        ctx.lineTo(29, 0);
+        ctx.stroke();
+        ctx.restore();
+        return;
+      }
       if (weaponKind === "flamer") {
         drawFlamethrower(isPlayer);
         return;
@@ -5617,11 +5721,28 @@
       coopDisconnect(false);
       coop.relayMode = !!forceRelay;
       coop.role = "guest";
+      coop.guestClass = coop.guestClass || "gunner";
       coop.codeView = "remote";
       coop.scannedOfferReady = false;
       coopSetVisibleCode("", false);
       setCoopStatus("SCAN HOST QR");
       coopRefreshPanel();
+    }
+
+    function coopChooseGuestClass() {
+      coopDisconnect(false);
+      coop.role = "guest-class";
+      coop.codeView = "remote";
+      setCoopStatus("SELECT GUEST CLASS");
+      coopRefreshPanel();
+    }
+
+    function coopSelectGuestClass(kind) {
+      coop.guestClass = kind === "healer" ? "healer" : "gunner";
+      healerEnergy = 10;
+      healerReload = 0;
+      healerActive = false;
+      return coopChooseGuest();
     }
 
     function coopChooseHostMode() {
@@ -5744,6 +5865,7 @@
       const hostButton = document.getElementById("coop-host");
       const guestButton = document.getElementById("coop-guest");
       const modeRow = document.getElementById("coop-mode-row");
+      const guestClassRow = document.getElementById("coop-guest-class-row");
       const slots = document.getElementById("coop-slots");
       const resetButton = document.getElementById("coop-disconnect");
       const copyButton = document.getElementById("coop-copy");
@@ -5760,7 +5882,8 @@
       const failed = /^FAILED\b/.test(coop.status) || /^TURN RELAY FAIL\b/.test(coop.status) || coop.lastError === "PC_FAILED" || coop.lastError === "ICE_FAILED" || /^NO_RELAY/.test(coop.lastError || "");
       roleRow.style.display = coop.role ? "none" : "grid";
       if (modeRow) modeRow.style.display = coop.role === "host-mode" ? "grid" : "none";
-      actionRow.style.display = coop.role && coop.role !== "host-mode" ? "grid" : "none";
+      if (guestClassRow) guestClassRow.style.display = coop.role === "guest-class" ? "grid" : "none";
+      actionRow.style.display = coop.role && coop.role !== "host-mode" && coop.role !== "guest-class" ? "grid" : "none";
       scanButton.style.display = coop.role === "guest" && !hasLocal ? "" : "none";
       useButton.style.display = coop.role === "host" || (coop.role === "guest" && failed && hasRemote) ? "" : "none";
       qrButton.style.display = hasLocal && coop.codeView === "local" ? "" : "none";
@@ -5799,6 +5922,9 @@
       } else if (coop.role === "host-mode") {
         codeLabel.textContent = "HOST MODE";
         help.textContent = "COOP starts a two-player room. Use + to prepare one more guest slot.";
+      } else if (coop.role === "guest-class") {
+        codeLabel.textContent = "GUEST CLASS";
+        help.textContent = "GUNNER fights. HEALER links to the host and heals at close range.";
       } else if (coop.role === "host") {
         useButton.textContent = failed ? "RETRY RELAY" : coop.codeView === "local" ? "ENTER GUEST CODE" : "CONNECT";
         qrButton.textContent = qrOpen ? "HIDE HOST QR" : "SHOW HOST QR";
@@ -5879,6 +6005,9 @@
         '<div id="coop-mode-row" style="display:none;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">' +
         '<button id="coop-mode-coop" type="button">COOP</button>' +
         '<button id="coop-mode-pvp" type="button" disabled>PVP</button></div>' +
+        '<div id="coop-guest-class-row" style="display:none;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">' +
+        '<button id="coop-guest-gunner" type="button">GUNNER</button>' +
+        '<button id="coop-guest-healer" type="button">HEALER</button></div>' +
         '<div id="coop-slots" style="display:none;margin-bottom:8px"></div>' +
         '<div id="coop-action-row" style="display:none;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">' +
         '<button id="coop-scan" type="button">SCAN QR</button>' +
@@ -5908,8 +6037,10 @@
       document.getElementById("coop-mode-pvp").disabled = true;
       document.getElementById("coop-guest").onclick = () => {
         if (coop.busy) return;
-        coopChooseGuest();
+        coopChooseGuestClass();
       };
+      document.getElementById("coop-guest-gunner").onclick = () => coopSelectGuestClass("gunner");
+      document.getElementById("coop-guest-healer").onclick = () => coopSelectGuestClass("healer");
       document.getElementById("coop-use").onclick = () => coopRunBusy("CONNECTING", () => coopUseButtonAction());
       document.getElementById("coop-disconnect").onclick = () => coopDisconnect();
       document.getElementById("coop-scan").onclick = () => coopRunBusy(coop.scannedOfferReady || coopGetRemoteSignal() ? "CONNECTING" : "SCANNING", () => coopPrimaryScanAction());
@@ -6893,6 +7024,10 @@
         angle: player.angle,
         hp: player.hp,
         weapon: selectedWeapon,
+        guestClass: coop.guestClass || "gunner",
+        healActive: healerActive,
+        healEnergy: healerEnergy,
+        healReload: healerReload,
         moving: player.isMoving,
         shotSeq: coopShotSeq,
         shot: coopLastShot,
@@ -7004,8 +7139,21 @@
       remote.r = 24;
       remote.collisionR = 15;
       remote.weapon = data.weapon || "rifle";
+      remote.guestClass = data.guestClass || "gunner";
+      remote.healActive = !!data.healActive;
+      remote.healEnergy = Number(data.healEnergy) || 0;
+      remote.healReload = Number(data.healReload) || 0;
       remote.moving = !!data.moving;
       remote._channel = holder.channel || coop.channel || null;
+      if (coop.role === "host" && remote.guestClass === "healer" && remote.healActive && player.hp > 0) {
+        const healDt = Math.max(0.016, Math.min(0.08, (now - (remote.healAppliedAt || now - 33)) / 1000));
+        remote.healAppliedAt = now;
+        if (Math.hypot(remote.x - player.x, remote.y - player.y) < 345 && hasLineOfSight(remote.x, remote.y, player.x, player.y, Math.hypot(remote.x - player.x, remote.y - player.y), { ignoreBarricades: true })) {
+          player.hp = Math.min(100, player.hp + healDt * 6.5);
+          voiceCommandStatus = "HEAL LINK";
+          voiceCommandStatusTimer = Math.max(voiceCommandStatusTimer, 0.24);
+        }
+      }
       coopApplyRemoteShotDamage(data, holder);
       coopApplyRemoteAction(data, holder);
       const shotSeq = Number(data.shotSeq) || 0;
@@ -7389,8 +7537,9 @@
       updateCamera(dt, isMobile ? mobileAimWorldTarget() : aimTarget);
       updateAimRay(isMobile ? mobileAimWorldTarget() : aimTarget);
       const guestAimTarget = isMobile ? mobileAimWorldTarget() : aimTarget;
+      updateHealerGuest(dt);
       const guestShooting = mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice" && selectedWeapon !== "barricade");
-      if (guestShooting) {
+      if (guestShooting && coop.guestClass !== "healer") {
         if (selectedWeapon === "rifle") coopGuestFireVisual(guestAimTarget);
         else if (selectedWeapon === "flamer") firePlayerFlamer();
       }
@@ -7398,6 +7547,34 @@
       if (mouse.right || keys.has("KeyQ")) throwBomb(isMobile ? mobileAimWorldTarget() : aimTarget);
       coopGuestCollectPickups();
       coopUpdateGuestEffects(dt);
+    }
+
+    function updateHealerGuest(dt) {
+      if (coop.guestClass !== "healer") {
+        healerActive = false;
+        return;
+      }
+      if (healerReload > 0) {
+        healerReload = Math.max(0, healerReload - dt);
+        healerActive = false;
+        if (healerReload <= 0) healerEnergy = 10;
+        return;
+      }
+      const host = coop.remote;
+      const d = host ? Math.hypot(host.x - player.x, host.y - player.y) : Infinity;
+      const canHeal = !!host && (host.hp || 0) > 0 && d < 345 && healerEnergy > 0 && hasLineOfSight(player.x, player.y, host.x, host.y, d, { ignoreBarricades: true });
+      healerActive = canHeal;
+      if (healerActive) {
+        healerEnergy = Math.max(0, healerEnergy - dt);
+        voiceCommandStatus = "HEAL " + Math.ceil(healerEnergy) + "s";
+        voiceCommandStatusTimer = 0.25;
+        if (healerEnergy <= 0) {
+          healerReload = 3.5;
+          healerActive = false;
+          voiceCommandStatus = "HEAL RELOAD";
+          voiceCommandStatusTimer = 1.1;
+        }
+      }
     }
 
     function coopIsHostWorldClient() {
@@ -7415,7 +7592,7 @@
         ctx.rotate(remote.angle);
         ctx.shadowColor = "rgba(80,180,255,0.65)";
         ctx.shadowBlur = 16;
-        drawTacticalHuman(23, false, remote.weapon !== "bomb", remote.weapon === "flamer" ? "flamer" : "shooter");
+        drawTacticalHuman(23, false, remote.weapon !== "bomb", remote.guestClass === "healer" ? "healer" : (remote.weapon === "flamer" ? "flamer" : "shooter"));
         ctx.restore();
         ctx.save();
         ctx.strokeStyle = "rgba(100,200,255,0.9)";
@@ -7426,10 +7603,56 @@
         ctx.fillStyle = "#9ed8ff";
         ctx.font = "800 11px Arial";
         ctx.textAlign = "center";
-        ctx.fillText(i === 0 ? "ALLY" : ("ALLY " + (i + 1)), remote.x, remote.y - 36);
+        ctx.fillText(remote.guestClass === "healer" ? "HEALER" : (i === 0 ? "ALLY" : ("ALLY " + (i + 1))), remote.x, remote.y - 36);
         bar(remote.x - 24, remote.y - 31, 48, 5, remote.hp / 100, "#56b7ff", "#123044");
         ctx.restore();
       }
+    }
+
+    function drawCoopHealLinks() {
+      if (coop.role === "host") {
+        for (const remote of coopRemotePeers()) {
+          if (remote.guestClass === "healer" && remote.healActive && (remote.hp || 0) > 0 && player.hp > 0) {
+            drawHealBeam(remote.x, remote.y, player.x, player.y);
+          }
+        }
+      } else if (coop.role === "guest" && coop.guestClass === "healer" && healerActive && coop.remote && (coop.remote.hp || 0) > 0) {
+        drawHealBeam(player.x, player.y, coop.remote.x, coop.remote.y);
+      }
+    }
+
+    function drawHealBeam(x1, y1, x2, y2) {
+      const t = performance.now() * 0.006;
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const d = Math.hypot(dx, dy) || 1;
+      const nx = -dy / d;
+      const ny = dx / d;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.lineCap = "round";
+      for (let pass = 0; pass < 3; pass++) {
+        ctx.beginPath();
+        for (let i = 0; i <= 16; i++) {
+          const p = i / 16;
+          const wave = Math.sin(p * Math.PI * 5 + t + pass * 1.7) * (5 + pass * 2);
+          const x = x1 + dx * p + nx * wave;
+          const y = y1 + dy * p + ny * wave;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = pass === 0 ? "rgba(105,255,190,0.32)" : pass === 1 ? "rgba(170,235,255,0.42)" : "rgba(255,255,255,0.62)";
+        ctx.lineWidth = pass === 0 ? 9 : pass === 1 ? 5 : 2;
+        ctx.stroke();
+      }
+      ctx.fillStyle = "rgba(150,255,205,0.32)";
+      for (let i = 0; i < 5; i++) {
+        const p = (t * 0.18 + i * 0.2) % 1;
+        ctx.beginPath();
+        ctx.arc(x1 + dx * p + nx * Math.sin(p * 12 + t) * 10, y1 + dy * p + ny * Math.sin(p * 12 + t) * 10, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
     }
 
     function mobileButtonRects() {
@@ -8457,8 +8680,8 @@
       const savedIntroStarted = introStarted;
       const savedIntroSoundStarted = introSoundStarted;
       const savedCamera = { x: camera.x, y: camera.y, zoom: camera.zoom };
-      const savedInventory = { selectedWeapon, rifleAmmo, rifleReload, bombCount, flameAmmo, iceAmmo, barricadeCount, itemDropMode, dashCharges, dashRecharge };
-      const savedCoop = { role: coop.role, connected: coop.connected, remote: coop.remote, worldSeq: coop.worldSeq, mapSeq: coop.mapSeq };
+      const savedInventory = { selectedWeapon, rifleAmmo, rifleReload, bombCount, flameAmmo, iceAmmo, barricadeCount, itemDropMode, dashCharges, dashRecharge, healerEnergy, healerReload, healerActive };
+      const savedCoop = { role: coop.role, connected: coop.connected, remote: coop.remote, worldSeq: coop.worldSeq, mapSeq: coop.mapSeq, guestClass: coop.guestClass, status: coop.status };
       try {
         walls.length = 0;
         doors.length = 0;
@@ -8947,6 +9170,62 @@
         const coopGuestKeepsLocalShotFx = tracers.some((tr) => tr.localOnly) && tracers.some((tr) => !tr.localOnly);
         const directOnlySkipsTurnServers = directIceServers().every((server) => !String(server.urls || "").startsWith("turn"));
         const relayModeIncludesTurnServers = fallbackIceServers().some((server) => String(server.urls || "").startsWith("turn"));
+        walls.length = 0;
+        doors.length = 0;
+        props.length = 0;
+        enemies.length = 0;
+        player.x = 500;
+        player.y = 500;
+        player.r = 24;
+        player.collisionR = 15;
+        props.push({ x: 540, y: 500, type: "barricade", a: 0, w: 92, h: 24, hp: 10, maxHp: 10, buildTime: 0 });
+        const barricadePlayerMover = { x: 500, y: 500, r: 24, collisionR: 15 };
+        moveCircle(player, 80, 0);
+        moveCircle(barricadePlayerMover, 80, 0);
+        const playerPassesBarricade = player.x > 560;
+        const nonPlayerBlockedByBarricade = barricadePlayerMover.x < 520;
+        const wideBarricadeTopIsClear = !circleBarricade(540, 536, 12, props[0]);
+        const wideBarricadeCenterBlocks = circleBarricade(540, 500, 12, props[0]);
+        const barricadeHpBeforeEnemyShot = props[0].hp;
+        enemyFire({ x: 430, y: 500, r: 24, fast: false }, 1, 0, { x: 650, y: 500, hp: 100, invuln: 0 });
+        const enemyShotDamagesBarricade = props[0].hp < barricadeHpBeforeEnemyShot;
+        const barricadeHpAfterFirstShot = props[0].hp;
+        enemyFire({ x: 430, y: 500, r: 24, fast: false }, 1, 0, { x: 650, y: 500, hp: 100, invuln: 0 });
+        const damagedBarricadeStillBlocksBullets = props[0].hp < barricadeHpAfterFirstShot;
+        player.x = 650;
+        player.y = 500;
+        player.hp = 100;
+        props[0].hp = 10;
+        enemies.push({ x: 430, y: 500, r: 24, collisionR: 18, hp: 100, maxHp: 100, kind: "shooter", fast: false, shoot: 0, bite: 0, alert: 1, speed: 80, wobble: 0 });
+        state = "play";
+        update(0.18);
+        const shooterTargetsBarricadeBeforePlayer = props[0].hp < 10 && player.hp === 100;
+        coop.role = "guest-class";
+        coop.guestClass = "gunner";
+        coopSelectGuestClass("healer");
+        const guestClassSelectionWorks = coop.role === "guest" && coop.guestClass === "healer";
+        coop.role = "guest";
+        coop.connected = true;
+        coop.guestClass = "healer";
+        coop.remote = { x: player.x + 160, y: player.y, hp: 60, r: 24, collisionR: 15, last: performance.now(), weapon: "rifle" };
+        healerEnergy = 10;
+        healerReload = 0;
+        updateHealerGuest(0.5);
+        const healerGuestActivatesNearHost = healerActive && healerEnergy < 10;
+        updateHealerGuest(10.5);
+        const healerReloadsAfterTenSeconds = !healerActive && healerReload > 0;
+        updateHealerGuest(4);
+        const healerEnergyRefillsAfterReload = healerEnergy === 10 && healerReload === 0;
+        coop.role = "host";
+        coop.connected = true;
+        player.x = 500;
+        player.y = 500;
+        player.hp = 55;
+        const healBeforeHostApply = player.hp;
+        coop.remote = { x: 620, y: 500, hp: 100, r: 24, collisionR: 15, last: performance.now() - 100, guestClass: "healer", healActive: true, weapon: "healer" };
+        coopApplyRemotePeerState({ x: 620, y: 500, hp: 100, r: 24, collisionR: 15, guestClass: "healer", healActive: true, weapon: "healer", ts: performance.now() - 500 });
+        const healerLinkHealsHost = player.hp > healBeforeHostApply;
+        const healerBeamDrawable = typeof drawHealBeam === "function";
         player.x = savedPlayer.x;
         player.y = savedPlayer.y;
         player.collisionR = savedPlayer.collisionR;
@@ -9040,7 +9319,20 @@
           coopWorldCarriesShotImpacts,
           coopGuestKeepsLocalShotFx,
           directOnlySkipsTurnServers,
-          relayModeIncludesTurnServers
+          relayModeIncludesTurnServers,
+          playerPassesBarricade,
+          nonPlayerBlockedByBarricade,
+          wideBarricadeTopIsClear,
+          wideBarricadeCenterBlocks,
+          enemyShotDamagesBarricade,
+          damagedBarricadeStillBlocksBullets,
+          shooterTargetsBarricadeBeforePlayer,
+          guestClassSelectionWorks,
+          healerGuestActivatesNearHost,
+          healerReloadsAfterTenSeconds,
+          healerEnergyRefillsAfterReload,
+          healerLinkHealsHost,
+          healerBeamDrawable
         };
       } finally {
         walls.length = 0;
@@ -9086,11 +9378,16 @@
         itemDropMode = savedInventory.itemDropMode;
         dashCharges = savedInventory.dashCharges;
         dashRecharge = savedInventory.dashRecharge;
+        healerEnergy = savedInventory.healerEnergy;
+        healerReload = savedInventory.healerReload;
+        healerActive = savedInventory.healerActive;
         coop.role = savedCoop.role;
         coop.connected = savedCoop.connected;
         coop.remote = savedCoop.remote;
         coop.worldSeq = savedCoop.worldSeq;
         coop.mapSeq = savedCoop.mapSeq;
+        coop.guestClass = savedCoop.guestClass;
+        coop.status = savedCoop.status;
         mobileControls.weaponTouchId = null;
         mobileControls.weaponDragX = 0;
         mobileControls.weaponReady = false;
