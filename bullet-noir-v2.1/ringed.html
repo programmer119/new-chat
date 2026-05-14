@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.49";
-    const BUILD_TIMESTAMP = "2026-05-14 22:21:00 KST";
+    const BUILD_VERSION = "2.1.50";
+    const BUILD_TIMESTAMP = "2026-05-14 22:38:00 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -281,13 +281,14 @@
     const pvpLanePaths = {
       top: [
         { x: 270, y: 800 },
-        { x: 520, y: 800 },
-        { x: 875, y: 800 },
-        { x: 875, y: 622 },
-        { x: 875, y: 420 },
-        { x: 1320, y: 420 },
-        { x: 1320, y: 622 },
-        { x: 1680, y: 800 },
+        { x: 430, y: 690 },
+        { x: 650, y: 670 },
+        { x: 865, y: 650 },
+        { x: 865, y: 592 },
+        { x: 1050, y: 400 },
+        { x: 1270, y: 420 },
+        { x: 1500, y: 540 },
+        { x: 1730, y: 660 },
         { x: 1930, y: 800 }
       ],
       mid: [
@@ -299,13 +300,14 @@
       ],
       bot: [
         { x: 270, y: 800 },
-        { x: 520, y: 800 },
-        { x: 875, y: 800 },
-        { x: 875, y: 978 },
-        { x: 875, y: 1180 },
-        { x: 1320, y: 1180 },
-        { x: 1320, y: 978 },
-        { x: 1680, y: 800 },
+        { x: 430, y: 910 },
+        { x: 650, y: 930 },
+        { x: 865, y: 950 },
+        { x: 865, y: 1008 },
+        { x: 1050, y: 1200 },
+        { x: 1270, y: 1180 },
+        { x: 1500, y: 1060 },
+        { x: 1730, y: 940 },
         { x: 1930, y: 800 }
       ]
     };
@@ -1390,34 +1392,46 @@
 
       addWall(90, 126, 2020, 44);
       addWall(90, 1430, 2020, 44);
-      addWall(480, 250, 44, 270);
-      addWall(1676, 250, 44, 270);
-      addWall(480, 1080, 44, 270);
-      addWall(1676, 1080, 44, 270);
+      addWall(460, 236, 44, 230);
+      addWall(1696, 236, 44, 230);
+      addWall(460, 1134, 44, 230);
+      addWall(1696, 1134, 44, 230);
 
-      addWall(42, 600, 768, 44);
-      addDoor(810, 600, 130, 44, "h");
-      addWall(940, 600, 315, 44);
-      addDoor(1255, 600, 130, 44, "h");
-      addWall(1385, 600, 773, 44);
+      addWall(42, 626, 520, 44);
+      addWall(562, 590, 238, 44);
+      addDoor(800, 570, 130, 44, "h");
+      addWall(930, 590, 340, 44);
+      addDoor(1270, 570, 130, 44, "h");
+      addWall(1400, 590, 240, 44);
+      addWall(1640, 626, 518, 44);
 
-      addWall(42, 956, 768, 44);
-      addDoor(810, 956, 130, 44, "h");
-      addWall(940, 956, 315, 44);
-      addDoor(1255, 956, 130, 44, "h");
-      addWall(1385, 956, 773, 44);
+      addWall(42, 930, 520, 44);
+      addWall(562, 966, 238, 44);
+      addDoor(800, 986, 130, 44, "h");
+      addWall(930, 966, 340, 44);
+      addDoor(1270, 986, 130, 44, "h");
+      addWall(1400, 966, 240, 44);
+      addWall(1640, 930, 518, 44);
 
-      addWall(766, 520, 44, 232);
-      addWall(940, 520, 44, 232);
-      addWall(1211, 520, 44, 232);
-      addWall(1385, 520, 44, 232);
-      addWall(766, 848, 44, 232);
-      addWall(940, 848, 44, 232);
-      addWall(1211, 848, 44, 232);
-      addWall(1385, 848, 44, 232);
+      addWall(748, 500, 44, 70);
+      addWall(938, 500, 44, 70);
+      addWall(1218, 500, 44, 70);
+      addWall(1408, 500, 44, 70);
+      addWall(748, 666, 44, 64);
+      addWall(938, 666, 44, 64);
+      addWall(1218, 666, 44, 64);
+      addWall(1408, 666, 44, 64);
+      addWall(748, 870, 44, 64);
+      addWall(938, 870, 44, 64);
+      addWall(1218, 870, 44, 64);
+      addWall(1408, 870, 44, 64);
+      addWall(748, 1030, 44, 70);
+      addWall(938, 1030, 44, 70);
+      addWall(1218, 1030, 44, 70);
+      addWall(1408, 1030, 44, 70);
 
-      addWall(1005, 300, 42, 280);
-      addWall(1155, 1020, 42, 280);
+      addWall(1005, 292, 42, 250);
+      addWall(1155, 1058, 42, 250);
 
       addFixture(270, 800, 84, 14, 0, 230, 1.1);
       addFixture(1930, 800, 84, 14, Math.PI, 230, 1.1);
@@ -1431,12 +1445,12 @@
       const towerSpecs = [
         ["blue", "base", 405, 800],
         ["red", "base", 1795, 800],
-        ["blue", "top", 620, 430],
-        ["red", "top", 1580, 430],
-        ["blue", "mid", 720, 800],
-        ["red", "mid", 1480, 800],
-        ["blue", "bot", 620, 1170],
-        ["red", "bot", 1580, 1170]
+        ["blue", "top", 760, 545],
+        ["red", "top", 1440, 545],
+        ["blue", "mid", 790, 800],
+        ["red", "mid", 1410, 800],
+        ["blue", "bot", 760, 1055],
+        ["red", "bot", 1440, 1055]
       ];
       for (const [team, lane, x, y] of towerSpecs) {
         pvpTowers.push({ team, lane, x, y, r: lane === "base" ? 34 : 30, hp: lane === "base" ? 560 : 420, maxHp: lane === "base" ? 560 : 420, shoot: 0.5 });
