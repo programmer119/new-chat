@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.45";
-    const BUILD_TIMESTAMP = "2026-05-14 20:09:01 KST";
+    const BUILD_VERSION = "2.1.46";
+    const BUILD_TIMESTAMP = "2026-05-14 20:20:39 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -270,6 +270,36 @@
     const walls = [];
     const doors = [];
     const fixtures = [];
+    let currentMapMode = "default";
+    const pvpBases = [];
+    const pvpTowers = [];
+    const pvpMinions = [];
+    let pvpWaveTimer = 0;
+    const pvpLanePaths = {
+      top: [
+        { x: 270, y: 800 },
+        { x: 420, y: 500 },
+        { x: 760, y: 280 },
+        { x: 1370, y: 250 },
+        { x: 1780, y: 500 },
+        { x: 1930, y: 800 }
+      ],
+      mid: [
+        { x: 270, y: 800 },
+        { x: 560, y: 805 },
+        { x: 1100, y: 800 },
+        { x: 1640, y: 795 },
+        { x: 1930, y: 800 }
+      ],
+      bot: [
+        { x: 270, y: 800 },
+        { x: 420, y: 1100 },
+        { x: 760, y: 1320 },
+        { x: 1370, y: 1350 },
+        { x: 1780, y: 1100 },
+        { x: 1930, y: 800 }
+      ]
+    };
     let fixtureBoost = 0;
     const weaponNames = { rifle: "RIFLE", bomb: "BOMB", flamer: "FLAMER", ice: "ICE", barricade: "BARR" };
     let itemDropMode = true;
@@ -1112,12 +1142,14 @@
     }
 
     function resetWorld() {
-      player.x = 330;
-      player.y = 500;
+      currentMapMode = coop.hostMode === "pvp" ? "pvp" : "default";
+      const start = currentMapMode === "pvp" ? pvpSpawnForLocalPlayer() : { x: 330, y: 500, angle: 0 };
+      player.x = start.x;
+      player.y = start.y;
       player.hp = 100;
       player.stamina = 100;
-      player.angle = 0;
-      player.targetAngle = 0;
+      player.angle = start.angle || 0;
+      player.targetAngle = player.angle;
       player.moveX = 0;
       player.moveY = 0;
       player.isMoving = false;
@@ -1147,6 +1179,7 @@
       walls.length = 0;
       doors.length = 0;
       fixtures.length = 0;
+      resetPvpState();
       fixtureBoost = 0;
       kills = 0;
       wave = 1;
@@ -1170,14 +1203,20 @@
       lastIdleY = player.y;
       if (isMobile) initMobileAimCursor();
 
-      buildFacilityMap();
-      if (!usingCustomMap) {
+      if (currentMapMode === "pvp") {
+        buildPvpMap();
+      } else {
+        buildFacilityMap();
+      }
+      if (!usingCustomMap && currentMapMode !== "pvp") {
         for (let i = 0; i < 22; i++) {
           addRandomProp();
         }
       }
-      for (let i = 0; i < 4; i++) spawnEnemyNearPlayer();
-      for (let i = 0; i < 6; i++) spawnEnemy();
+      if (currentMapMode !== "pvp") {
+        for (let i = 0; i < 4; i++) spawnEnemyNearPlayer();
+        for (let i = 0; i < 6; i++) spawnEnemy();
+      }
     }
 
     function startGame() {
@@ -1317,6 +1356,63 @@
       addFixture(1830, 268, 72, 12, 0, 170, 0.88);
     }
 
+    function pvpSpawnForLocalPlayer() {
+      if (coop.role === "guest") return { x: 1925, y: 800, angle: Math.PI };
+      return { x: 275, y: 800, angle: 0 };
+    }
+
+    function resetPvpState() {
+      pvpBases.length = 0;
+      pvpTowers.length = 0;
+      pvpMinions.length = 0;
+      pvpWaveTimer = 0.75;
+    }
+
+    function buildPvpMap() {
+      usingCustomMap = false;
+      const t = 42;
+      addWall(0, 0, world.w, t);
+      addWall(0, world.h - t, world.w, t);
+      addWall(0, 0, t, world.h);
+      addWall(world.w - t, 0, t, world.h);
+
+      addWall(520, 610, 430, 44);
+      addWall(520, 946, 430, 44);
+      addWall(1248, 610, 430, 44);
+      addWall(1248, 946, 430, 44);
+      addWall(1005, 360, 42, 320);
+      addWall(1155, 920, 42, 320);
+
+      addFixture(270, 800, 84, 14, 0, 230, 1.1);
+      addFixture(1930, 800, 84, 14, Math.PI, 230, 1.1);
+      addFixture(740, 270, 72, 12, 0.25, 185, 0.85);
+      addFixture(1460, 1330, 72, 12, Math.PI + 0.25, 185, 0.85);
+
+      pvpBases.push(
+        { team: "blue", x: 270, y: 800, r: 190, hp: 1200, maxHp: 1200 },
+        { team: "red", x: 1930, y: 800, r: 190, hp: 1200, maxHp: 1200 }
+      );
+      const towerSpecs = [
+        ["blue", "base", 405, 800],
+        ["red", "base", 1795, 800],
+        ["blue", "top", 620, 430],
+        ["red", "top", 1580, 430],
+        ["blue", "mid", 720, 800],
+        ["red", "mid", 1480, 800],
+        ["blue", "bot", 620, 1170],
+        ["red", "bot", 1580, 1170]
+      ];
+      for (const [team, lane, x, y] of towerSpecs) {
+        pvpTowers.push({ team, lane, x, y, r: lane === "base" ? 34 : 30, hp: lane === "base" ? 560 : 420, maxHp: lane === "base" ? 560 : 420, shoot: 0.5 });
+      }
+      props.push(
+        { x: 840, y: 520, type: "rock", s: 0.85, a: -0.25, hp: 120, maxHp: 120 },
+        { x: 1360, y: 1080, type: "rock", s: 0.85, a: 0.25, hp: 120, maxHp: 120 },
+        { x: 1095, y: 795, type: "crate", s: 0.72, a: 0.12, hp: 70, maxHp: 70 }
+      );
+      spawnPvpWave();
+    }
+
     function loadSavedMap() {
       try {
         const raw = localStorage.getItem("sangsub.map.v1");
@@ -1374,6 +1470,7 @@
     function serializeMapData() {
       return {
         version: 1,
+        mapMode: currentMapMode,
         world: { w: world.w, h: world.h },
         walls: walls.map(({ x, y, w, h }) => ({ x, y, w, h })),
         doors: doors.map(({ x, y, w, h, axis }) => ({ x, y, w, h, axis })),
@@ -1383,6 +1480,7 @@
     }
 
     function applyMapData(data) {
+      currentMapMode = data && data.mapMode === "pvp" ? "pvp" : "default";
       walls.length = 0;
       doors.length = 0;
       fixtures.length = 0;
@@ -1421,6 +1519,14 @@
           });
           ensurePropHealth(props[props.length - 1]);
         }
+      }
+      if (currentMapMode === "pvp" && coop.role === "guest") {
+        const start = pvpSpawnForLocalPlayer();
+        player.x = start.x;
+        player.y = start.y;
+        player.angle = start.angle;
+        player.targetAngle = start.angle;
+        if (isMobile) initMobileAimCursor();
       }
     }
 
@@ -2749,6 +2855,172 @@
       return null;
     }
 
+    function pvpLanePath(team, lane) {
+      const path = pvpLanePaths[lane] || pvpLanePaths.mid;
+      return team === "red" ? path.slice().reverse() : path;
+    }
+
+    function spawnPvpWave() {
+      for (const team of ["blue", "red"]) {
+        for (const lane of ["top", "mid", "bot"]) {
+          const path = pvpLanePath(team, lane);
+          for (let i = 0; i < 3; i++) {
+            const p = path[0];
+            const n = path[1] || p;
+            const a = Math.atan2(n.y - p.y, n.x - p.x);
+            pvpMinions.push({
+              team,
+              lane,
+              pathIndex: 1,
+              x: p.x - Math.sin(a) * (i - 1) * 18,
+              y: p.y + Math.cos(a) * (i - 1) * 18,
+              r: 13,
+              hp: 90,
+              maxHp: 90,
+              shoot: 0.35 + i * 0.12
+            });
+          }
+        }
+      }
+    }
+
+    function pvpEnemyActors(team) {
+      const actors = [];
+      if (team !== "blue" && player.hp > 0) actors.push(player);
+      for (const remote of coopRemotePeers()) {
+        const remoteTeam = remote.team || "red";
+        if (remoteTeam !== team && (remote.hp || 0) > 0) actors.push(remote);
+      }
+      return actors;
+    }
+
+    function nearestPvpTarget(unit, range) {
+      let best = null;
+      let bestD = range * range;
+      const enemyTeam = unit.team === "blue" ? "red" : "blue";
+      for (const other of pvpMinions) {
+        if (other.team !== enemyTeam || other.hp <= 0) continue;
+        const d = dist2(unit.x, unit.y, other.x, other.y);
+        if (d < bestD) {
+          bestD = d;
+          best = other;
+        }
+      }
+      for (const tower of pvpTowers) {
+        if (tower.team !== enemyTeam || tower.hp <= 0) continue;
+        const d = dist2(unit.x, unit.y, tower.x, tower.y);
+        if (d < bestD) {
+          bestD = d;
+          best = tower;
+        }
+      }
+      for (const base of pvpBases) {
+        if (base.team !== enemyTeam || base.hp <= 0) continue;
+        const d = dist2(unit.x, unit.y, base.x, base.y);
+        if (d < bestD) {
+          bestD = d;
+          best = base;
+        }
+      }
+      for (const actor of pvpEnemyActors(unit.team)) {
+        const d = dist2(unit.x, unit.y, actor.x, actor.y);
+        if (d < bestD) {
+          bestD = d;
+          best = actor;
+        }
+      }
+      return best;
+    }
+
+    function damagePvpTarget(target, amount) {
+      if (!target) return;
+      if (target === player || coopRemotePeers().includes(target)) {
+        coopDamageTarget(target, amount);
+        return;
+      }
+      target.hp = Math.max(0, (target.hp || 0) - amount);
+      target.hitFlash = 0.12;
+    }
+
+    function pvpBulletHit(bullet) {
+      const targets = pvpMinions.concat(pvpTowers, pvpBases);
+      for (const target of targets) {
+        if (!target || target.hp <= 0) continue;
+        const rr = (target.r || 20) + (bullet.r || 4);
+        if (dist2(target.x, target.y, bullet.x, bullet.y) <= rr * rr) {
+          target.hp = Math.max(0, (target.hp || 0) - 34);
+          target.hitFlash = 0.12;
+          burst(bullet.x, bullet.y, "#c8e7a0", 7);
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function updatePvp(dt) {
+      if (currentMapMode !== "pvp") return;
+      pvpWaveTimer -= dt;
+      if (pvpWaveTimer <= 0) {
+        pvpWaveTimer = 10;
+        spawnPvpWave();
+      }
+      for (const tower of pvpTowers) {
+        if (tower.hp <= 0) continue;
+        tower.hitFlash = Math.max(0, (tower.hitFlash || 0) - dt);
+        tower.shoot -= dt;
+        if (tower.shoot > 0) continue;
+        const target = nearestPvpTarget(tower, 310);
+        if (target) {
+          const dx = target.x - tower.x;
+          const dy = target.y - tower.y;
+          const d = Math.hypot(dx, dy) || 1;
+          enemyTracers.push({ x1: tower.x, y1: tower.y, x2: tower.x + dx / d * Math.min(d, 260), y2: tower.y + dy / d * Math.min(d, 260), life: 0.12, maxLife: 0.12 });
+          damagePvpTarget(target, 22);
+          burst(target.x, target.y, tower.team === "blue" ? "#8ed1ff" : "#ff8b78", 5);
+        }
+        tower.shoot = 0.9;
+      }
+      for (let i = pvpMinions.length - 1; i >= 0; i--) {
+        const m = pvpMinions[i];
+        if (m.hp <= 0) {
+          burst(m.x, m.y, m.team === "blue" ? "#80c7ff" : "#ff7a70", 8);
+          pvpMinions.splice(i, 1);
+          continue;
+        }
+        m.shoot -= dt;
+        const target = nearestPvpTarget(m, 115);
+        if (target) {
+          const dx = target.x - m.x;
+          const dy = target.y - m.y;
+          const d = Math.hypot(dx, dy) || 1;
+          m.angle = Math.atan2(dy, dx);
+          if (m.shoot <= 0) {
+            enemyTracers.push({ x1: m.x, y1: m.y, x2: m.x + dx / d * Math.min(d, 86), y2: m.y + dy / d * Math.min(d, 86), life: 0.09, maxLife: 0.09 });
+            damagePvpTarget(target, 8);
+            m.shoot = 0.72 + Math.random() * 0.2;
+          }
+          continue;
+        }
+        const path = pvpLanePath(m.team, m.lane);
+        const next = path[m.pathIndex] || path[path.length - 1];
+        const dx = next.x - m.x;
+        const dy = next.y - m.y;
+        const d = Math.hypot(dx, dy) || 1;
+        m.angle = Math.atan2(dy, dx);
+        if (d < 24 && m.pathIndex < path.length - 1) m.pathIndex++;
+        moveCircle(m, dx / d * 72 * dt, dy / d * 72 * dt);
+      }
+      for (let i = pvpMinions.length - 1; i >= 0; i--) {
+        if (pvpMinions[i].hp <= 0) pvpMinions.splice(i, 1);
+      }
+      for (let i = pvpTowers.length - 1; i >= 0; i--) {
+        if (pvpTowers[i].hp <= 0) {
+          burst(pvpTowers[i].x, pvpTowers[i].y, "#f7ead7", 18);
+          pvpTowers.splice(i, 1);
+        }
+      }
+    }
+
     function update(dt) {
       voiceCommandStatusTimer = Math.max(0, voiceCommandStatusTimer - dt);
       voiceCommandFlash = Math.max(0, voiceCommandFlash - dt);
@@ -2794,11 +3066,11 @@
         if (dashRecharge <= 0) dashCharges = 3;
       }
       updateRaidWarningEffects(dt);
-      if (spawnTimer <= 0) {
+      if (currentMapMode !== "pvp" && spawnTimer <= 0) {
         spawnTimer = Math.max(0.35, 1.25 - wave * 0.045);
         if (enemies.length < 18 + wave * 2) spawnEnemy();
       }
-      wave = 1 + Math.floor(kills / 12);
+      if (currentMapMode !== "pvp") wave = 1 + Math.floor(kills / 12);
 
       const localPlayerDead = player.hp <= 0 || state === "dead";
       let mx = 0;
@@ -2841,7 +3113,7 @@
       player.moveY = my;
       player.isMoving = Math.hypot(player.x - beforePlayerX, player.y - beforePlayerY) > 0.35;
       updateDoors(dt);
-      updateIdleRaid(dt, Math.hypot(player.x - beforePlayerX, player.y - beforePlayerY), mouse.down || mouse.right || keys.has("KeyQ"));
+      if (currentMapMode !== "pvp") updateIdleRaid(dt, Math.hypot(player.x - beforePlayerX, player.y - beforePlayerY), mouse.down || mouse.right || keys.has("KeyQ"));
 
       const worldMouse = screenToWorld(mouse.x, mouse.y);
       let aimTarget = currentAimTarget(worldMouse);
@@ -2854,12 +3126,17 @@
       updateAimRay(aimTarget);
       if (!localPlayerDead && (mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice"))) fire();
       if (!localPlayerDead && (mouse.right || keys.has("KeyQ"))) throwBomb(aimTarget);
+      updatePvp(dt);
 
       for (let i = bullets.length - 1; i >= 0; i--) {
         const b = bullets[i];
         b.x += b.vx * dt;
         b.y += b.vy * dt;
         b.life -= dt;
+        if (currentMapMode === "pvp" && pvpBulletHit(b)) {
+          bullets.splice(i, 1);
+          continue;
+        }
         if (b.life <= 0 || b.x < 0 || b.x > world.w || b.y < 0 || b.y > world.h) bullets.splice(i, 1);
       }
       for (let i = bombs.length - 1; i >= 0; i--) {
@@ -4258,6 +4535,7 @@
       ctx.scale(camera.zoom, camera.zoom);
       ctx.translate(-camera.x, -camera.y);
       drawGround();
+      drawPvpMapLayer();
       drawFacility();
       drawProps();
       drawFixtureBodies();
@@ -4271,6 +4549,7 @@
       drawEnemyTracers();
       drawFlameBursts();
       drawIceStorms();
+      drawPvpEntities();
       for (const e of enemies) drawEnemy(e);
       drawSpeechBubbles();
       drawPlayer();
@@ -4326,6 +4605,110 @@
         const y = (i * 577) % world.h;
         ctx.fillRect(x, y, 2 + (i % 7), 1);
       }
+    }
+
+    function pvpTeamColor(team, alpha = 1) {
+      return team === "blue" ? "rgba(98, 178, 255, " + alpha + ")" : "rgba(255, 91, 78, " + alpha + ")";
+    }
+
+    function drawPvpMapLayer() {
+      if (currentMapMode !== "pvp") return;
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      for (const lane of ["top", "mid", "bot"]) {
+        const path = pvpLanePaths[lane];
+        ctx.beginPath();
+        ctx.moveTo(path[0].x, path[0].y);
+        for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
+        ctx.strokeStyle = lane === "mid" ? "rgba(210,220,225,.16)" : "rgba(210,220,225,.12)";
+        ctx.lineWidth = lane === "mid" ? 84 : 72;
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(240,246,255,.34)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      for (const base of pvpBases) {
+        const g = ctx.createRadialGradient(base.x, base.y, 20, base.x, base.y, base.r);
+        g.addColorStop(0, pvpTeamColor(base.team, 0.16));
+        g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(base.x, base.y, base.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = pvpTeamColor(base.team, 0.52);
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(base.x, base.y, base.r * 0.78, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    function drawPvpHealth(x, y, w, value, max, team) {
+      const pct = clamp((value || 0) / (max || 1), 0, 1);
+      ctx.fillStyle = "rgba(0,0,0,.72)";
+      ctx.fillRect(x - w / 2, y, w, 5);
+      ctx.fillStyle = pvpTeamColor(team, 0.95);
+      ctx.fillRect(x - w / 2, y, w * pct, 5);
+    }
+
+    function drawPvpEntities() {
+      if (currentMapMode !== "pvp") return;
+      ctx.save();
+      for (const base of pvpBases) {
+        ctx.fillStyle = pvpTeamColor(base.team, 0.22);
+        ctx.strokeStyle = pvpTeamColor(base.team, 0.8);
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(base.x, base.y, 44, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "rgba(245,245,235,.92)";
+        ctx.font = "900 18px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText(base.team === "blue" ? "BASE A" : "BASE B", base.x, base.y + 7);
+        drawPvpHealth(base.x, base.y + 58, 118, base.hp, base.maxHp, base.team);
+      }
+      for (const tower of pvpTowers) {
+        ctx.save();
+        ctx.translate(tower.x, tower.y);
+        if (tower.hitFlash > 0) ctx.shadowBlur = 18, ctx.shadowColor = "#fff";
+        ctx.fillStyle = "rgba(12,14,18,.95)";
+        ctx.strokeStyle = pvpTeamColor(tower.team, 0.95);
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(0, 0, tower.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(245,245,235,.78)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(-tower.r * 0.55, 0);
+        ctx.lineTo(tower.r * 0.55, 0);
+        ctx.moveTo(0, -tower.r * 0.55);
+        ctx.lineTo(0, tower.r * 0.55);
+        ctx.stroke();
+        ctx.restore();
+        drawPvpHealth(tower.x, tower.y + tower.r + 8, 72, tower.hp, tower.maxHp, tower.team);
+      }
+      for (const m of pvpMinions) {
+        ctx.save();
+        ctx.translate(m.x, m.y);
+        ctx.rotate(m.angle || 0);
+        ctx.fillStyle = pvpTeamColor(m.team, 0.82);
+        ctx.strokeStyle = "rgba(255,255,255,.48)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, m.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "rgba(255,255,255,.76)";
+        ctx.fillRect(3, -3, 13, 6);
+        ctx.restore();
+        drawPvpHealth(m.x, m.y + 17, 34, m.hp, m.maxHp, m.team);
+      }
+      ctx.restore();
     }
 
     function drawFacility() {
@@ -5926,13 +6309,14 @@
       }
     }
 
-    function coopChooseHost(forceRelay = false) {
+    function coopChooseHost(forceRelay = false, hostMode = "coop") {
       coop.role = "host";
-      coop.hostMode = "coop";
+      coop.hostMode = hostMode === "pvp" ? "pvp" : "coop";
       coop.guestSlotCount = Math.max(1, coop.guestSlotCount || 1);
       coop.relayMode = !!forceRelay;
       coop.codeView = "local";
       coop.scannedOfferReady = false;
+      if (coop.hostMode === "pvp") resetWorld();
       coopRefreshPanel();
       return coopStartHost();
     }
@@ -6226,7 +6610,7 @@
         '<button id="coop-guest" type="button">GUEST</button></div>' +
         '<div id="coop-mode-row" style="display:none;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">' +
         '<button id="coop-mode-coop" type="button">COOP</button>' +
-        '<button id="coop-mode-pvp" type="button" disabled>PVP</button></div>' +
+        '<button id="coop-mode-pvp" type="button">PVP</button></div>' +
         '<div id="coop-guest-class-row" style="display:none;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">' +
         '<button id="coop-guest-gunner" type="button">GUNNER</button>' +
         '<button id="coop-guest-healer" type="button">HEALER</button></div>' +
@@ -6256,7 +6640,7 @@
       document.getElementById("coop-close").onclick = () => coopPanel.style.display = "none";
       document.getElementById("coop-host").onclick = () => coopChooseHostMode();
       document.getElementById("coop-mode-coop").onclick = () => coopRunBusy("HOSTING", () => coopChooseHost());
-      document.getElementById("coop-mode-pvp").disabled = true;
+      document.getElementById("coop-mode-pvp").onclick = () => coopRunBusy("HOSTING PVP", () => coopChooseHost(false, "pvp"));
       document.getElementById("coop-guest").onclick = () => {
         if (coop.busy) return;
         coopChooseGuestClass();
@@ -7051,7 +7435,7 @@
         setCoopStatus("HOSTING");
         const pc = await coopCreatePeer();
         coop.role = "host";
-        coop.hostMode = "coop";
+        coop.hostMode = coop.hostMode === "pvp" ? "pvp" : "coop";
         coop.activeHostSlot = 0;
         coop.hostSlots = [];
         coop.extraRemotes = [];
@@ -7246,6 +7630,7 @@
         y: player.y,
         angle: player.angle,
         hp: player.hp,
+        team: coop.role === "guest" ? "red" : "blue",
         weapon: selectedWeapon,
         guestClass: coop.guestClass || "gunner",
         healActive: healerActive,
@@ -7366,6 +7751,7 @@
       remote.r = 24;
       remote.collisionR = 15;
       remote.weapon = data.weapon || "rifle";
+      remote.team = data.team || (coop.role === "host" ? "red" : "blue");
       remote.guestClass = data.guestClass || "gunner";
       remote.healActive = !!data.healActive;
       remote.healEnergy = Number(data.healEnergy) || 0;
@@ -7512,6 +7898,7 @@
       return {
         t: "world",
         seq: coop.worldSeq,
+        mapMode: currentMapMode,
         kills,
         wave,
         shake: Math.min(10, Math.max(0, shake)),
@@ -7535,7 +7922,10 @@
         particles: particles.filter((p) => !p.localOnly).map((p) => coopCloneFields(p, ["x", "y", "vx", "vy", "life", "color", "r", "solidStop"])),
         enemyTracers: enemyTracers.map((tr) => coopCloneFields(tr, ["x1", "y1", "x2", "y2", "life", "maxLife"])),
         flameBursts: flameBursts.map((f) => coopCloneFields(f, ["x", "y", "angle", "life", "maxLife", "length", "spread", "hostile"])),
-        iceStorms: iceStorms.map((s) => coopCloneFields(s, ["x", "y", "angle", "life", "maxLife", "length", "maxLength", "seed"]))
+        iceStorms: iceStorms.map((s) => coopCloneFields(s, ["x", "y", "angle", "life", "maxLife", "length", "maxLength", "seed"])),
+        pvpBases: pvpBases.map((b) => coopCloneFields(b, ["team", "x", "y", "r", "hp", "maxHp"])),
+        pvpTowers: pvpTowers.map((t) => coopCloneFields(t, ["team", "lane", "x", "y", "r", "hp", "maxHp", "shoot", "hitFlash"])),
+        pvpMinions: pvpMinions.map((m) => coopCloneFields(m, ["team", "lane", "pathIndex", "x", "y", "r", "hp", "maxHp", "shoot", "angle"]))
       };
     }
 
@@ -7602,6 +7992,7 @@
         coop.worldSeq = data.seq;
         coop.worldRecvAt = performance.now();
         if (state !== "play" && state !== "dead") state = "play";
+        currentMapMode = data.mapMode === "pvp" ? "pvp" : "default";
         kills = Number.isFinite(data.kills) ? data.kills : kills;
         wave = Number.isFinite(data.wave) ? data.wave : wave;
         fixtureBoost = Number.isFinite(data.fixtureBoost) ? data.fixtureBoost : fixtureBoost;
@@ -7637,6 +8028,9 @@
         coopCopyArray(enemyTracers, data.enemyTracers);
         coopCopyArray(flameBursts, data.flameBursts);
         coopCopyArray(iceStorms, data.iceStorms);
+        coopCopyArray(pvpBases, data.pvpBases);
+        coopCopyArray(pvpTowers, data.pvpTowers);
+        coopCopyArray(pvpMinions, data.pvpMinions);
         coopApplyHostEnemies(data.enemies);
         coopApplyHostSpeechBubbles(data.speechBubbles);
       } catch (err) {
@@ -9036,6 +9430,11 @@
       const savedFlameBursts = flameBursts.slice();
       const savedIceStorms = iceStorms.slice();
       const savedDashBursts = dashBursts.slice();
+      const savedPvpBases = pvpBases.slice();
+      const savedPvpTowers = pvpTowers.slice();
+      const savedPvpMinions = pvpMinions.slice();
+      const savedPvpWaveTimer = pvpWaveTimer;
+      const savedMapMode = currentMapMode;
       const savedState = state;
       const savedIntroTimer = introTimer;
       const savedIntroStarted = introStarted;
@@ -9060,6 +9459,9 @@
         iceStorms.length = 0;
         dashBursts.length = 0;
         iceStorms.length = 0;
+        pvpBases.length = 0;
+        pvpTowers.length = 0;
+        pvpMinions.length = 0;
         addWall(500, 500, 42, 220);
         addDoor(430, 740, 42, 180, "v");
         doors[0].open = 0;
@@ -9637,6 +10039,24 @@
           updateHealerGuest(0.2, { x: coop.remote.x, y: coop.remote.y });
           return !healerActive;
         })();
+        resetPvpState();
+        walls.length = 0;
+        doors.length = 0;
+        props.length = 0;
+        fixtures.length = 0;
+        currentMapMode = "pvp";
+        buildPvpMap();
+        const pvpMapHasTwoBases = pvpBases.length === 2 && pvpBases.some((b) => b.team === "blue") && pvpBases.some((b) => b.team === "red");
+        const pvpMapHasEightTowers = pvpTowers.length >= 8 && ["top", "mid", "bot", "base"].every((lane) => pvpTowers.some((t) => t.lane === lane));
+        const pvpHasThreeLanes = ["top", "mid", "bot"].every((lane) => Array.isArray(pvpLanePaths[lane]) && pvpLanePaths[lane].length >= 5);
+        const pvpInitialWaveSpawns = pvpMinions.length >= 18;
+        const firstMinion = pvpMinions[0];
+        const firstBefore = firstMinion ? { x: firstMinion.x, y: firstMinion.y } : { x: 0, y: 0 };
+        updatePvp(0.35);
+        const pvpMinionsAdvance = !!firstMinion && Math.hypot(firstMinion.x - firstBefore.x, firstMinion.y - firstBefore.y) > 1;
+        const pvpPayload = coopWorldPayload();
+        const pvpWorldSyncs = pvpPayload.mapMode === "pvp" && pvpPayload.pvpTowers.length === pvpTowers.length && pvpPayload.pvpMinions.length === pvpMinions.length;
+        const pvpMapSerializesMode = serializeMapData().mapMode === "pvp";
         player.x = savedPlayer.x;
         player.y = savedPlayer.y;
         player.collisionR = savedPlayer.collisionR;
@@ -9751,7 +10171,14 @@
           healerDrainsEnemyAndSelfHeals,
           healerEnemyLinkVisibleWhenHostDead,
           healerDrainBuildsReserveAtFullHp,
-          healerDoesNotHealFullAlly
+          healerDoesNotHealFullAlly,
+          pvpMapHasTwoBases,
+          pvpMapHasEightTowers,
+          pvpHasThreeLanes,
+          pvpInitialWaveSpawns,
+          pvpMinionsAdvance,
+          pvpWorldSyncs,
+          pvpMapSerializesMode
         };
       } finally {
         walls.length = 0;
@@ -9767,6 +10194,9 @@
         blastLights.length = 0;
         fizzles.length = 0;
         flameBursts.length = 0;
+        pvpBases.length = 0;
+        pvpTowers.length = 0;
+        pvpMinions.length = 0;
         for (const wall of savedWalls) walls.push(wall);
         for (const door of savedDoors) doors.push(door);
         for (const corpse of savedCorpses) corpses.push(corpse);
@@ -9782,6 +10212,11 @@
         for (const flame of savedFlameBursts) flameBursts.push(flame);
         for (const storm of savedIceStorms) iceStorms.push(storm);
         for (const dash of savedDashBursts) dashBursts.push(dash);
+        for (const base of savedPvpBases) pvpBases.push(base);
+        for (const tower of savedPvpTowers) pvpTowers.push(tower);
+        for (const minion of savedPvpMinions) pvpMinions.push(minion);
+        pvpWaveTimer = savedPvpWaveTimer;
+        currentMapMode = savedMapMode;
         state = savedState;
         introTimer = savedIntroTimer;
         introStarted = savedIntroStarted;
