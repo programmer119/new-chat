@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.42";
-    const BUILD_TIMESTAMP = "2026-05-14 18:11:50 KST";
+    const BUILD_VERSION = "2.1.43";
+    const BUILD_TIMESTAMP = "2026-05-14 18:44:53 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -264,6 +264,7 @@
     const corpses = [];
     const deathTexts = [];
     const speechBubbles = [];
+    const healPluses = [];
     const pickups = [];
     const props = [];
     const walls = [];
@@ -285,6 +286,13 @@
     let healerEnergy = 10;
     let healerReload = 0;
     let healerActive = false;
+    let healerPath = null;
+    let healerTargetX = 0;
+    let healerTargetY = 0;
+    let healerPlusTimer = 0;
+    const HEAL_TARGET_RADIUS = 92;
+    const HEAL_PATH_MAX = 315;
+    const HEAL_RATE = 9.75;
     const lightCanvas = document.createElement("canvas");
     const lightCtx = lightCanvas.getContext("2d");
 
@@ -1119,6 +1127,7 @@
       iceStorms.length = 0;
       enemies.length = 0;
       particles.length = 0;
+      healPluses.length = 0;
       dashBursts.length = 0;
       flashes.length = 0;
       killLights.length = 0;
@@ -1232,6 +1241,7 @@
       bombs.length = 0;
       enemies.length = 0;
       particles.length = 0;
+      healPluses.length = 0;
       corpses.length = 0;
       deathTexts.length = 0;
       walls.length = 0;
@@ -2436,6 +2446,130 @@
       return false;
     }
 
+    function healBlockers() {
+      return explosionBlockers({ ignoreBarricades: true });
+    }
+
+    function healPathPassable(x, y, r = 15) {
+      if (x < r || y < r || x > world.w - r || y > world.h - r) return false;
+      for (const rect of healBlockers()) {
+        if (circleRect(x, y, r, rect)) return false;
+      }
+      return true;
+    }
+
+    function directHealClear(x1, y1, x2, y2) {
+      const d = Math.hypot(x2 - x1, y2 - y1) || 1;
+      return hasLineOfSight(x1, y1, x2, y2, d, { ignoreBarricades: true });
+    }
+
+    function healPathLength(points) {
+      let total = 0;
+      for (let i = 1; i < points.length; i++) {
+        total += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+      }
+      return total;
+    }
+
+    function trimHealPath(points) {
+      if (points.length <= 2) return points;
+      const trimmed = [points[0]];
+      let anchor = points[0];
+      for (let i = 2; i < points.length; i++) {
+        if (!directHealClear(anchor.x, anchor.y, points[i].x, points[i].y)) {
+          trimmed.push(points[i - 1]);
+          anchor = points[i - 1];
+        }
+      }
+      trimmed.push(points[points.length - 1]);
+      return trimmed;
+    }
+
+    function findHealPath(x1, y1, x2, y2, maxLen = HEAL_PATH_MAX) {
+      const direct = Math.hypot(x2 - x1, y2 - y1);
+      if (direct <= maxLen && directHealClear(x1, y1, x2, y2)) return [{ x: x1, y: y1 }, { x: x2, y: y2 }];
+      const step = 32;
+      const margin = 96;
+      const minX = Math.max(0, Math.floor((Math.min(x1, x2) - maxLen - margin) / step) * step);
+      const minY = Math.max(0, Math.floor((Math.min(y1, y2) - maxLen - margin) / step) * step);
+      const maxX = Math.min(world.w, Math.ceil((Math.max(x1, x2) + maxLen + margin) / step) * step);
+      const maxY = Math.min(world.h, Math.ceil((Math.max(y1, y2) + maxLen + margin) / step) * step);
+      const cols = Math.max(1, Math.ceil((maxX - minX) / step) + 1);
+      const rows = Math.max(1, Math.ceil((maxY - minY) / step) + 1);
+      const cx = (x) => clamp(Math.round((x - minX) / step), 0, cols - 1);
+      const cy = (y) => clamp(Math.round((y - minY) / step), 0, rows - 1);
+      const key = (x, y) => x + "," + y;
+      const start = { x: cx(x1), y: cy(y1) };
+      const goal = { x: cx(x2), y: cy(y2) };
+      const nearest = (cell) => {
+        for (let radius = 0; radius < 5; radius++) {
+          for (let yy = cell.y - radius; yy <= cell.y + radius; yy++) {
+            for (let xx = cell.x - radius; xx <= cell.x + radius; xx++) {
+              if (xx < 0 || yy < 0 || xx >= cols || yy >= rows) continue;
+              if (Math.max(Math.abs(xx - cell.x), Math.abs(yy - cell.y)) !== radius) continue;
+              if (healPathPassable(minX + xx * step, minY + yy * step)) return { x: xx, y: yy };
+            }
+          }
+        }
+        return null;
+      };
+      const s = nearest(start);
+      const g = nearest(goal);
+      if (!s || !g) return null;
+      const queue = [s];
+      const came = new Map();
+      const dist = new Map([[key(s.x, s.y), 0]]);
+      const visited = new Set([key(s.x, s.y)]);
+      let found = null;
+      const dirs = [
+        [1, 0], [-1, 0], [0, 1], [0, -1],
+        [1, 1], [1, -1], [-1, 1], [-1, -1]
+      ];
+      while (queue.length) {
+        const cur = queue.shift();
+        const curKey = key(cur.x, cur.y);
+        if (cur.x === g.x && cur.y === g.y) {
+          found = cur;
+          break;
+        }
+        for (const [dx, dy] of dirs) {
+          const nx = cur.x + dx;
+          const ny = cur.y + dy;
+          if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+          const id = key(nx, ny);
+          if (visited.has(id)) continue;
+          const wx = minX + nx * step;
+          const wy = minY + ny * step;
+          if (!healPathPassable(wx, wy)) continue;
+          if (dx && dy) {
+            if (!healPathPassable(minX + cur.x * step + dx * step, minY + cur.y * step) ||
+                !healPathPassable(minX + cur.x * step, minY + cur.y * step + dy * step)) continue;
+          }
+          const nextDist = (dist.get(curKey) || 0) + Math.hypot(dx, dy) * step;
+          if (nextDist > maxLen + step) continue;
+          visited.add(id);
+          came.set(id, cur);
+          dist.set(id, nextDist);
+          queue.push({ x: nx, y: ny });
+        }
+      }
+      if (!found) return null;
+      const cells = [];
+      let node = found;
+      while (node) {
+        cells.push(node);
+        node = came.get(key(node.x, node.y));
+      }
+      cells.reverse();
+      const points = [{ x: x1, y: y1 }];
+      for (let i = 1; i < cells.length - 1; i++) {
+        points.push({ x: minX + cells[i].x * step, y: minY + cells[i].y * step });
+      }
+      points.push({ x: x2, y: y2 });
+      const trimmed = trimHealPath(points);
+      return healPathLength(trimmed) <= maxLen + 8 ? trimmed : null;
+    }
+
     function rayBlockDistance(x, y, dx, dy, maxDist) {
       let best = maxDist;
       for (const rect of explosionBlockers()) {
@@ -2821,6 +2955,12 @@
         p.vy *= Math.pow(0.04, dt);
         if (p.solidStop && pointInsideSolid(p.x, p.y)) p.life = 0;
         if (p.life <= 0) particles.splice(i, 1);
+      }
+      for (let i = healPluses.length - 1; i >= 0; i--) {
+        const plus = healPluses[i];
+        plus.life -= dt;
+        plus.y -= dt * 26;
+        if (plus.life <= 0) healPluses.splice(i, 1);
       }
       for (let i = dashBursts.length - 1; i >= 0; i--) {
         dashBursts[i].life -= dt;
@@ -3247,6 +3387,10 @@
     }
 
     function updateAimRay(worldMouse) {
+      if (coop.role === "guest" && coop.guestClass === "healer") {
+        aimRay = null;
+        return;
+      }
       const dx = Math.cos(player.angle);
       const dy = Math.sin(player.angle);
       const sx = player.x + dx * 34;
@@ -4096,6 +4240,7 @@
       drawPlayer();
       drawRemoteCoopPeer();
       drawCoopHealLinks();
+      drawHealPluses();
       drawDashBursts();
       drawParticles();
       drawOriginalFlashlightLayer();
@@ -5211,6 +5356,42 @@
         ctx.fill();
       }
       ctx.globalAlpha = 1;
+    }
+
+    function addHealPlus(x, y) {
+      healPluses.push({
+        x: x + (Math.random() - 0.5) * 18,
+        y: y - 38 + (Math.random() - 0.5) * 6,
+        life: 0.64,
+        maxLife: 0.64,
+        s: 0.9 + Math.random() * 0.25
+      });
+      if (healPluses.length > 18) healPluses.shift();
+    }
+
+    function drawHealPluses() {
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "900 24px Arial";
+      for (const plus of healPluses) {
+        const p = 1 - plus.life / plus.maxLife;
+        const alpha = Math.max(0, Math.min(1, plus.life / plus.maxLife));
+        const s = plus.s * (0.82 + Math.sin(p * Math.PI) * 0.34);
+        ctx.save();
+        ctx.translate(plus.x, plus.y);
+        ctx.scale(s, s);
+        ctx.globalAlpha = alpha;
+        ctx.shadowColor = "rgba(115,255,190,0.9)";
+        ctx.shadowBlur = 12;
+        ctx.strokeStyle = "rgba(14,60,42,0.9)";
+        ctx.lineWidth = 4;
+        ctx.strokeText("+", 0, 0);
+        ctx.fillStyle = "rgba(170,255,214,0.96)";
+        ctx.fillText("+", 0, 0);
+        ctx.restore();
+      }
+      ctx.restore();
     }
 
     function drawOriginalFlashlightLayer() {
@@ -6736,6 +6917,7 @@
     function coopResetGuestTransientEffects() {
       shake = 0;
       particles.length = 0;
+      healPluses.length = 0;
       tracers.length = 0;
       enemyTracers.length = 0;
       flashes.length = 0;
@@ -7028,6 +7210,8 @@
         healActive: healerActive,
         healEnergy: healerEnergy,
         healReload: healerReload,
+        healTargetX: healerTargetX,
+        healTargetY: healerTargetY,
         moving: player.isMoving,
         shotSeq: coopShotSeq,
         shot: coopLastShot,
@@ -7143,16 +7327,31 @@
       remote.healActive = !!data.healActive;
       remote.healEnergy = Number(data.healEnergy) || 0;
       remote.healReload = Number(data.healReload) || 0;
+      remote.healTargetX = Number(data.healTargetX) || remote.x;
+      remote.healTargetY = Number(data.healTargetY) || remote.y;
       remote.moving = !!data.moving;
       remote._channel = holder.channel || coop.channel || null;
       if (coop.role === "host" && remote.guestClass === "healer" && remote.healActive && player.hp > 0) {
         const healDt = Math.max(0.016, Math.min(0.08, (now - (remote.healAppliedAt || now - 33)) / 1000));
         remote.healAppliedAt = now;
-        if (Math.hypot(remote.x - player.x, remote.y - player.y) < 345 && hasLineOfSight(remote.x, remote.y, player.x, player.y, Math.hypot(remote.x - player.x, remote.y - player.y), { ignoreBarricades: true })) {
-          player.hp = Math.min(100, player.hp + healDt * 6.5);
+        const targetClose = Math.hypot(remote.healTargetX - player.x, remote.healTargetY - player.y) <= HEAL_TARGET_RADIUS;
+        const path = targetClose ? findHealPath(remote.x, remote.y, player.x, player.y, HEAL_PATH_MAX) : null;
+        remote.healPath = path;
+        if (path) {
+          player.hp = Math.min(100, player.hp + healDt * HEAL_RATE);
           voiceCommandStatus = "HEAL LINK";
           voiceCommandStatusTimer = Math.max(voiceCommandStatusTimer, 0.24);
+          remote.healPlusTimer = (remote.healPlusTimer || 0) - healDt;
+          if (remote.healPlusTimer <= 0) {
+            remote.healPlusTimer = 0.28;
+            addHealPlus(player.x, player.y);
+          }
+        } else {
+          remote.healActive = false;
+          remote.healPath = null;
         }
+      } else {
+        remote.healPath = null;
       }
       coopApplyRemoteShotDamage(data, holder);
       coopApplyRemoteAction(data, holder);
@@ -7447,6 +7646,12 @@
         p.vy *= Math.pow(0.04, dt);
         if (p.life <= 0) particles.splice(i, 1);
       }
+      for (let i = healPluses.length - 1; i >= 0; i--) {
+        const plus = healPluses[i];
+        plus.life -= dt;
+        plus.y -= dt * 26;
+        if (plus.life <= 0) healPluses.splice(i, 1);
+      }
       for (let i = tracers.length - 1; i >= 0; i--) {
         tracers[i].life -= dt;
         if (tracers[i].life <= 0) tracers.splice(i, 1);
@@ -7537,7 +7742,7 @@
       updateCamera(dt, isMobile ? mobileAimWorldTarget() : aimTarget);
       updateAimRay(isMobile ? mobileAimWorldTarget() : aimTarget);
       const guestAimTarget = isMobile ? mobileAimWorldTarget() : aimTarget;
-      updateHealerGuest(dt);
+      updateHealerGuest(dt, guestAimTarget);
       const guestShooting = mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice" && selectedWeapon !== "barricade");
       if (guestShooting && coop.guestClass !== "healer") {
         if (selectedWeapon === "rifle") coopGuestFireVisual(guestAimTarget);
@@ -7549,31 +7754,46 @@
       coopUpdateGuestEffects(dt);
     }
 
-    function updateHealerGuest(dt) {
+    function updateHealerGuest(dt, aimTarget) {
       if (coop.guestClass !== "healer") {
         healerActive = false;
+        healerPath = null;
         return;
       }
       if (healerReload > 0) {
         healerReload = Math.max(0, healerReload - dt);
         healerActive = false;
+        healerPath = null;
         if (healerReload <= 0) healerEnergy = 10;
         return;
       }
       const host = coop.remote;
-      const d = host ? Math.hypot(host.x - player.x, host.y - player.y) : Infinity;
-      const canHeal = !!host && (host.hp || 0) > 0 && d < 345 && healerEnergy > 0 && hasLineOfSight(player.x, player.y, host.x, host.y, d, { ignoreBarricades: true });
-      healerActive = canHeal;
+      healerTargetX = aimTarget ? aimTarget.x : player.x;
+      healerTargetY = aimTarget ? aimTarget.y : player.y;
+      const aimClose = !!host && Math.hypot(healerTargetX - host.x, healerTargetY - host.y) <= HEAL_TARGET_RADIUS;
+      const path = aimClose && host && (host.hp || 0) > 0 && healerEnergy > 0
+        ? findHealPath(player.x, player.y, host.x, host.y, HEAL_PATH_MAX)
+        : null;
+      healerPath = path;
+      healerActive = !!path;
       if (healerActive) {
         healerEnergy = Math.max(0, healerEnergy - dt);
         voiceCommandStatus = "HEAL " + Math.ceil(healerEnergy) + "s";
         voiceCommandStatusTimer = 0.25;
+        healerPlusTimer -= dt;
+        if (healerPlusTimer <= 0) {
+          healerPlusTimer = 0.28;
+          addHealPlus(host.x, host.y);
+        }
         if (healerEnergy <= 0) {
           healerReload = 3.5;
           healerActive = false;
+          healerPath = null;
           voiceCommandStatus = "HEAL RELOAD";
           voiceCommandStatusTimer = 1.1;
         }
+      } else {
+        healerPlusTimer = Math.min(healerPlusTimer, 0.1);
       }
     }
 
@@ -7613,43 +7833,69 @@
       if (coop.role === "host") {
         for (const remote of coopRemotePeers()) {
           if (remote.guestClass === "healer" && remote.healActive && (remote.hp || 0) > 0 && player.hp > 0) {
-            drawHealBeam(remote.x, remote.y, player.x, player.y);
+            drawHealBeam(remote.healPath || [remote, player]);
           }
         }
       } else if (coop.role === "guest" && coop.guestClass === "healer" && healerActive && coop.remote && (coop.remote.hp || 0) > 0) {
-        drawHealBeam(player.x, player.y, coop.remote.x, coop.remote.y);
+        drawHealBeam(healerPath || [player, coop.remote]);
       }
     }
 
-    function drawHealBeam(x1, y1, x2, y2) {
+    function drawHealBeam(pathOrX1, y1, x2, y2) {
+      const path = Array.isArray(pathOrX1) ? pathOrX1 : [{ x: pathOrX1, y: y1 }, { x: x2, y: y2 }];
+      if (!path || path.length < 2) return;
       const t = performance.now() * 0.006;
-      const dx = x2 - x1;
-      const dy = y2 - y1;
-      const d = Math.hypot(dx, dy) || 1;
-      const nx = -dy / d;
-      const ny = dx / d;
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
       ctx.lineCap = "round";
       for (let pass = 0; pass < 3; pass++) {
         ctx.beginPath();
-        for (let i = 0; i <= 16; i++) {
-          const p = i / 16;
-          const wave = Math.sin(p * Math.PI * 5 + t + pass * 1.7) * (5 + pass * 2);
-          const x = x1 + dx * p + nx * wave;
-          const y = y1 + dy * p + ny * wave;
-          if (i === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
+        let first = true;
+        for (let seg = 1; seg < path.length; seg++) {
+          const a = path[seg - 1];
+          const b = path[seg];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const d = Math.hypot(dx, dy) || 1;
+          const nx = -dy / d;
+          const ny = dx / d;
+          for (let i = 0; i <= 10; i++) {
+            const p = i / 10;
+            const globalP = (seg - 1 + p) / Math.max(1, path.length - 1);
+            const wave = Math.sin(globalP * Math.PI * 7 + t + pass * 1.7) * (5 + pass * 2);
+            const bow = Math.sin(p * Math.PI) * (pass + 1) * 2.6;
+            const x = a.x + dx * p + nx * (wave + bow);
+            const y = a.y + dy * p + ny * (wave + bow);
+            if (first) {
+              ctx.moveTo(x, y);
+              first = false;
+            } else ctx.lineTo(x, y);
+          }
         }
         ctx.strokeStyle = pass === 0 ? "rgba(105,255,190,0.32)" : pass === 1 ? "rgba(170,235,255,0.42)" : "rgba(255,255,255,0.62)";
         ctx.lineWidth = pass === 0 ? 9 : pass === 1 ? 5 : 2;
         ctx.stroke();
       }
       ctx.fillStyle = "rgba(150,255,205,0.32)";
+      const total = Math.max(1, healPathLength(path));
       for (let i = 0; i < 5; i++) {
-        const p = (t * 0.18 + i * 0.2) % 1;
+        let travel = ((t * 0.18 + i * 0.2) % 1) * total;
+        let point = path[path.length - 1];
+        let normal = { x: 0, y: 1 };
+        for (let seg = 1; seg < path.length; seg++) {
+          const a = path[seg - 1];
+          const b = path[seg];
+          const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+          if (travel <= len) {
+            const p = travel / len;
+            normal = { x: -(b.y - a.y) / len, y: (b.x - a.x) / len };
+            point = { x: a.x + (b.x - a.x) * p, y: a.y + (b.y - a.y) * p };
+            break;
+          }
+          travel -= len;
+        }
         ctx.beginPath();
-        ctx.arc(x1 + dx * p + nx * Math.sin(p * 12 + t) * 10, y1 + dy * p + ny * Math.sin(p * 12 + t) * 10, 3.5, 0, Math.PI * 2);
+        ctx.arc(point.x + normal.x * Math.sin(i + t) * 8, point.y + normal.y * Math.sin(i + t) * 8, 3.5, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
@@ -8666,6 +8912,7 @@
       const savedCorpses = corpses.slice();
       const savedDeathTexts = deathTexts.slice();
       const savedSpeechBubbles = speechBubbles.slice();
+      const savedHealPluses = healPluses.slice();
       const savedPickups = pickups.slice();
       const savedProps = props.slice();
       const savedEnemies = enemies.slice();
@@ -8688,6 +8935,7 @@
         corpses.length = 0;
         deathTexts.length = 0;
         speechBubbles.length = 0;
+        healPluses.length = 0;
         pickups.length = 0;
         props.length = 0;
         enemies.length = 0;
@@ -9210,11 +9458,11 @@
         coop.remote = { x: player.x + 160, y: player.y, hp: 60, r: 24, collisionR: 15, last: performance.now(), weapon: "rifle" };
         healerEnergy = 10;
         healerReload = 0;
-        updateHealerGuest(0.5);
+        updateHealerGuest(0.5, { x: coop.remote.x, y: coop.remote.y });
         const healerGuestActivatesNearHost = healerActive && healerEnergy < 10;
-        updateHealerGuest(10.5);
+        updateHealerGuest(10.5, { x: coop.remote.x, y: coop.remote.y });
         const healerReloadsAfterTenSeconds = !healerActive && healerReload > 0;
-        updateHealerGuest(4);
+        updateHealerGuest(4, { x: coop.remote.x, y: coop.remote.y });
         const healerEnergyRefillsAfterReload = healerEnergy === 10 && healerReload === 0;
         coop.role = "host";
         coop.connected = true;
@@ -9223,9 +9471,28 @@
         player.hp = 55;
         const healBeforeHostApply = player.hp;
         coop.remote = { x: 620, y: 500, hp: 100, r: 24, collisionR: 15, last: performance.now() - 100, guestClass: "healer", healActive: true, weapon: "healer" };
-        coopApplyRemotePeerState({ x: 620, y: 500, hp: 100, r: 24, collisionR: 15, guestClass: "healer", healActive: true, weapon: "healer", ts: performance.now() - 500 });
+        coopApplyRemotePeerState({ x: 620, y: 500, hp: 100, r: 24, collisionR: 15, guestClass: "healer", healActive: true, healTargetX: player.x, healTargetY: player.y, weapon: "healer", ts: performance.now() - 500 });
         const healerLinkHealsHost = player.hp > healBeforeHostApply;
         const healerBeamDrawable = typeof drawHealBeam === "function";
+        const healerPlusAppearsOnHeal = healPluses.length > 0;
+        walls.length = 0;
+        doors.length = 0;
+        props.length = 0;
+        player.x = 500;
+        player.y = 500;
+        coop.remote = { x: 620, y: 500, hp: 100, r: 24, collisionR: 15, last: performance.now(), weapon: "rifle" };
+        healerEnergy = 10;
+        healerReload = 0;
+        updateHealerGuest(0.2, { x: 900, y: 500 });
+        const healerNeedsAimTargetNearAlly = !healerActive;
+        addWall(552, 420, 42, 210);
+        updateHealerGuest(0.2, { x: coop.remote.x, y: coop.remote.y });
+        const healerBlockedWhenNoPath = !healerActive;
+        walls.length = 0;
+        doors.length = 0;
+        addWall(552, 470, 42, 160);
+        updateHealerGuest(0.2, { x: coop.remote.x, y: coop.remote.y });
+        const healerPathBendsThroughOpening = healerActive && healerPath && healerPath.length > 2;
         player.x = savedPlayer.x;
         player.y = savedPlayer.y;
         player.collisionR = savedPlayer.collisionR;
@@ -9332,7 +9599,11 @@
           healerReloadsAfterTenSeconds,
           healerEnergyRefillsAfterReload,
           healerLinkHealsHost,
-          healerBeamDrawable
+          healerBeamDrawable,
+          healerPlusAppearsOnHeal,
+          healerNeedsAimTargetNearAlly,
+          healerBlockedWhenNoPath,
+          healerPathBendsThroughOpening
         };
       } finally {
         walls.length = 0;
@@ -9340,6 +9611,7 @@
         corpses.length = 0;
         deathTexts.length = 0;
         speechBubbles.length = 0;
+        healPluses.length = 0;
         pickups.length = 0;
         props.length = 0;
         enemies.length = 0;
@@ -9352,6 +9624,7 @@
         for (const corpse of savedCorpses) corpses.push(corpse);
         for (const text of savedDeathTexts) deathTexts.push(text);
         for (const bubble of savedSpeechBubbles) speechBubbles.push(bubble);
+        for (const plus of savedHealPluses) healPluses.push(plus);
         for (const pickup of savedPickups) pickups.push(pickup);
         for (const prop of savedProps) props.push(prop);
         for (const enemy of savedEnemies) enemies.push(enemy);
@@ -9381,6 +9654,8 @@
         healerEnergy = savedInventory.healerEnergy;
         healerReload = savedInventory.healerReload;
         healerActive = savedInventory.healerActive;
+        healerPath = null;
+        healerPlusTimer = 0;
         coop.role = savedCoop.role;
         coop.connected = savedCoop.connected;
         coop.remote = savedCoop.remote;
