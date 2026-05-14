@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.40";
-    const BUILD_TIMESTAMP = "2026-05-14 17:09:09 KST";
+    const BUILD_VERSION = "2.1.41";
+    const BUILD_TIMESTAMP = "2026-05-14 17:25:48 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -5154,10 +5154,10 @@
         .map((actor) => coopRemoteFlashlightParams(actor, originalScalePulse, originalPosPulse))
         .filter(Boolean);
       for (const remoteLight of remoteLights) {
-        drawRadialLight(lightCtx, remoteLight.px, remoteLight.py, 18 * z, 220 * z, remoteLight.energy * 1.2);
-        drawSoftConeLight(lightCtx, remoteLight.px, remoteLight.py, remoteLight.angle, 390 * z, 0.56, remoteLight.energy * 0.78);
-        drawSoftConeLight(lightCtx, remoteLight.px + remoteLight.forward.x * 44 * z, remoteLight.py + remoteLight.forward.y * 44 * z, remoteLight.angle, 280 * z, 0.34, remoteLight.energy * 0.34);
-        drawLightTexture(lightCtx, assets.flashlight, remoteLight.beamX, remoteLight.beamY, remoteLight.angle + Math.PI / 2, 1024 * 0.18 * originalScalePulse * z, 1024 * 0.18 * originalScalePulse * z, remoteLight.energy * 0.055);
+        drawRadialLight(lightCtx, remoteLight.px, remoteLight.py, 20 * z, 270 * z, remoteLight.energy * 1.95);
+        drawSoftConeLight(lightCtx, remoteLight.px, remoteLight.py, remoteLight.angle, 480 * z, 0.64, remoteLight.energy * 1.22);
+        drawSoftConeLight(lightCtx, remoteLight.px + remoteLight.forward.x * 52 * z, remoteLight.py + remoteLight.forward.y * 52 * z, remoteLight.angle, 340 * z, 0.38, remoteLight.energy * 0.62);
+        drawLightTexture(lightCtx, assets.flashlight, remoteLight.beamX, remoteLight.beamY, remoteLight.angle + Math.PI / 2, 1024 * 0.22 * originalScalePulse * z, 1024 * 0.22 * originalScalePulse * z, remoteLight.energy * 0.12);
       }
       for (const flash of flashes) {
         const alpha = Math.max(0, flash.life / flash.maxLife);
@@ -5179,7 +5179,7 @@
       ctx.restore();
       drawVisibleFlashlightGlow(px, py, beamCenter.x, beamCenter.y, player.angle, mainEnergy);
       for (const remoteLight of remoteLights) {
-        drawVisibleFlashlightGlow(remoteLight.px, remoteLight.py, remoteLight.beamX, remoteLight.beamY, remoteLight.angle, remoteLight.energy * 0.82);
+        drawVisibleFlashlightGlow(remoteLight.px, remoteLight.py, remoteLight.beamX, remoteLight.beamY, remoteLight.angle, remoteLight.energy);
       }
     }
 
