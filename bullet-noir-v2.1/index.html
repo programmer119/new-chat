@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.47";
-    const BUILD_TIMESTAMP = "2026-05-14 20:42:18 KST";
+    const BUILD_VERSION = "2.1.48";
+    const BUILD_TIMESTAMP = "2026-05-14 21:58:00 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -1883,6 +1883,9 @@
       if (hit.enemy) {
         hit.enemy.hp -= 44;
         burst(hit.x, hit.y, "#9f2a24", 5);
+      } else if (hit.pvpTarget) {
+        damagePvpTarget(hit.pvpTarget, 44);
+        burst(hit.x, hit.y, "#c8e7a0", 7);
       } else if (hit.prop && hit.prop.type === "crate") {
         damageProp(hit.prop, 1, hit.x, hit.y);
       } else if (hit.prop && hit.prop.type === "barricade") {
@@ -1968,7 +1971,7 @@
       const sy = player.y + dy * 34;
       const hit = raycastShot(sx, sy, dx, dy, 980);
       tracers.push({ x1: sx, y1: sy, x2: hit.x, y2: hit.y, life: 0.09, maxLife: 0.09, localOnly: true });
-      if (hit.solid || hit.prop) burst(hit.x, hit.y, hit.prop && hit.prop.type === "crate" ? "#d0b58a" : "#f4efe8", 5, true);
+      if (hit.solid || hit.prop || hit.pvpTarget) burst(hit.x, hit.y, hit.pvpTarget ? "#c8e7a0" : (hit.prop && hit.prop.type === "crate" ? "#d0b58a" : "#f4efe8"), 5, true);
       flashes.push({ x: sx + dx * 18, y: sy + dy * 18, angle: player.angle, life: 0.075, maxLife: 0.075, localOnly: true });
       for (let i = 0; i < 4; i++) {
         particles.push({
@@ -2002,12 +2005,15 @@
       const dx = Math.cos(angle);
       const dy = Math.sin(angle);
       const maxDist = clamp(Number(shot.maxDist) || Math.max(980, dist), 20, 1200);
-      const hit = raycastShot(x1, y1, dx, dy, maxDist);
+      const hit = raycastShot(x1, y1, dx, dy, maxDist, "red");
       tracers.push({ x1, y1, x2: hit.x, y2: hit.y, life: 0.12, maxLife: 0.12 });
       flashes.push({ x: x1 + dx * 18, y: y1 + dy * 18, angle, life: 0.075, maxLife: 0.075 });
       if (hit.enemy) {
         hit.enemy.hp -= 44;
         burst(hit.x, hit.y, "#9f2a24", 5);
+      } else if (hit.pvpTarget) {
+        damagePvpTarget(hit.pvpTarget, 44);
+        burst(hit.x, hit.y, "#c8e7a0", 7);
       } else if (hit.prop && hit.prop.type === "crate") {
         damageProp(hit.prop, 1, hit.x, hit.y);
       } else if (hit.prop && hit.prop.type === "barricade") {
@@ -2972,17 +2978,29 @@
       }
       target.hp = Math.max(0, (target.hp || 0) - amount);
       target.hitFlash = 0.12;
+      if (currentMapMode === "pvp") checkPvpVictory();
     }
 
     function pvpBulletHit(bullet) {
+      const sx = Number.isFinite(bullet.prevX) ? bullet.prevX : bullet.x;
+      const sy = Number.isFinite(bullet.prevY) ? bullet.prevY : bullet.y;
+      const dxRaw = bullet.x - sx;
+      const dyRaw = bullet.y - sy;
+      const len = Math.hypot(dxRaw, dyRaw);
+      const dx = len > 0 ? dxRaw / len : Math.cos(Math.atan2(bullet.vy || 0, bullet.vx || 1));
+      const dy = len > 0 ? dyRaw / len : Math.sin(Math.atan2(bullet.vy || 0, bullet.vx || 1));
+      const maxDist = Math.max(len, bullet.r || 4);
+      const shooterTeam = bullet.team || "blue";
+      const enemyTeam = shooterTeam === "red" ? "blue" : "red";
       const targets = pvpMinions.concat(pvpTowers, pvpBases);
       for (const target of targets) {
-        if (!target || target.hp <= 0) continue;
+        if (!target || target.hp <= 0 || target.team !== enemyTeam) continue;
         const rr = (target.r || 20) + (bullet.r || 4);
-        if (dist2(target.x, target.y, bullet.x, bullet.y) <= rr * rr) {
+        const t = rayCircle(sx, sy, dx, dy, target.x, target.y, rr);
+        if (t !== null && t >= 0 && t <= maxDist) {
           target.hp = Math.max(0, (target.hp || 0) - 34);
           target.hitFlash = 0.12;
-          burst(bullet.x, bullet.y, "#c8e7a0", 7);
+          burst(sx + dx * t, sy + dy * t, "#c8e7a0", 7);
           checkPvpVictory();
           return true;
         }
@@ -3195,6 +3213,8 @@
 
       for (let i = bullets.length - 1; i >= 0; i--) {
         const b = bullets[i];
+        b.prevX = b.x;
+        b.prevY = b.y;
         b.x += b.vx * dt;
         b.y += b.vy * dt;
         b.life -= dt;
@@ -3717,12 +3737,12 @@
       }
     }
 
-    function raycastShot(x, y, dx, dy, maxDist) {
-      let best = { t: maxDist, x: x + dx * maxDist, y: y + dy * maxDist, enemy: null, solid: null, prop: null };
+    function raycastShot(x, y, dx, dy, maxDist, shooterTeam = null) {
+      let best = { t: maxDist, x: x + dx * maxDist, y: y + dy * maxDist, enemy: null, solid: null, prop: null, pvpTarget: null };
       for (const wall of walls) {
         const t = rayRect(x, y, dx, dy, wall);
         if (t !== null && t > 0 && t < best.t) {
-          best = { t, x: x + dx * t, y: y + dy * t, enemy: null, solid: wall, prop: null };
+          best = { t, x: x + dx * t, y: y + dy * t, enemy: null, solid: wall, prop: null, pvpTarget: null };
         }
       }
       for (const door of doors) {
@@ -3730,7 +3750,7 @@
         for (const rect of doorCollisionRects(door)) {
           const t = rayRect(x, y, dx, dy, rect);
           if (t !== null && t > 0 && t < best.t) {
-            best = { t, x: x + dx * t, y: y + dy * t, enemy: null, solid: rect, prop: null };
+            best = { t, x: x + dx * t, y: y + dy * t, enemy: null, solid: rect, prop: null, pvpTarget: null };
           }
         }
       }
@@ -3740,13 +3760,31 @@
         const rect = propCollisionRect(prop);
         const t = rayRect(x, y, dx, dy, rect);
         if (t !== null && t > 0 && t < best.t) {
-          best = { t, x: x + dx * t, y: y + dy * t, enemy: null, solid: rect, prop };
+          best = { t, x: x + dx * t, y: y + dy * t, enemy: null, solid: rect, prop, pvpTarget: null };
         }
       }
       for (const enemy of enemies) {
         const t = rayCircle(x, y, dx, dy, enemy.x, enemy.y, enemy.r + 6);
         if (t !== null && t > 0 && t < best.t) {
-          best = { t, x: x + dx * t, y: y + dy * t, enemy, solid: null, prop: null };
+          best = { t, x: x + dx * t, y: y + dy * t, enemy, solid: null, prop: null, pvpTarget: null };
+        }
+      }
+      if (currentMapMode === "pvp") {
+        const team = shooterTeam || (coop.role === "guest" ? "red" : "blue");
+        const enemyTeam = team === "red" ? "blue" : "red";
+        const pvpTargets = pvpMinions.concat(pvpTowers, pvpBases).filter((target) => target && target.team === enemyTeam && (target.hp || 0) > 0);
+        if (team === "blue") {
+          for (const remote of coopRemotePeers()) {
+            if ((remote.hp || 0) > 0) pvpTargets.push(remote);
+          }
+        } else if (player.hp > 0) {
+          pvpTargets.push(player);
+        }
+        for (const target of pvpTargets) {
+          const t = rayCircle(x, y, dx, dy, target.x, target.y, (target.r || 24) + 8);
+          if (t !== null && t > 0 && t < best.t) {
+            best = { t, x: x + dx * t, y: y + dy * t, enemy: null, solid: null, prop: null, pvpTarget: target };
+          }
         }
       }
       return best;
@@ -3781,7 +3819,7 @@
         x2: hit.x,
         y2: hit.y,
         blocked: !!hit.solid,
-        enemy: !!hit.enemy
+        enemy: !!(hit.enemy || hit.pvpTarget)
       };
     }
 
@@ -7914,7 +7952,8 @@
         const angle = Number.isFinite(shot.angle) ? Number(shot.angle) : Math.atan2(dyRaw, dxRaw);
         const dx = Math.cos(angle);
         const dy = Math.sin(angle);
-        const hit = raycastShot(x1, y1, dx, dy, clamp(Number(shot.maxDist) || d, 20, 1200));
+        const remoteTeam = coop.role === "host" ? "red" : "blue";
+        const hit = raycastShot(x1, y1, dx, dy, clamp(Number(shot.maxDist) || d, 20, 1200), remoteTeam);
         enemyTracers.push({
           x1,
           y1,
@@ -7924,7 +7963,7 @@
           maxLife: 0.12
         });
         flashes.push({ x: x1 + dx * 14, y: y1 + dy * 14, angle, life: 0.075, maxLife: 0.075 });
-        if (hit.solid || hit.prop) burst(hit.x, hit.y, "#f4efe8", 5);
+        if (hit.solid || hit.prop || hit.pvpTarget) burst(hit.x, hit.y, hit.pvpTarget ? "#c8e7a0" : "#f4efe8", 5);
       }
     }
 
@@ -10164,6 +10203,26 @@
         const pvpPayload = coopWorldPayload();
         const pvpWorldSyncs = pvpPayload.mapMode === "pvp" && pvpPayload.pvpTowers.length === pvpTowers.length && pvpPayload.pvpMinions.length === pvpMinions.length;
         const pvpMapSerializesMode = serializeMapData().mapMode === "pvp";
+        const redTower = pvpTowers.find((tower) => tower.team === "red" && tower.lane === "mid");
+        const redTowerHpBefore = redTower ? redTower.hp : 0;
+        const towerHit = redTower ? raycastShot(redTower.x - 220, redTower.y, 1, 0, 500, "blue") : null;
+        if (towerHit && towerHit.pvpTarget) damagePvpTarget(towerHit.pvpTarget, 44);
+        const pvpRifleHitsEnemyTower = !!redTower && towerHit && towerHit.pvpTarget === redTower && redTower.hp < redTowerHpBefore;
+        const redMinion = pvpMinions.find((minion) => minion.team === "red");
+        const redMinionHpBefore = redMinion ? redMinion.hp : 0;
+        const minionHit = redMinion ? raycastShot(redMinion.x - 60, redMinion.y, 1, 0, 160, "blue") : null;
+        if (minionHit && minionHit.pvpTarget) damagePvpTarget(minionHit.pvpTarget, 44);
+        const pvpRifleHitsEnemyMinion = !!redMinion && minionHit && minionHit.pvpTarget === redMinion && redMinion.hp < redMinionHpBefore;
+        player.x = 500;
+        player.y = 500;
+        player.hp = 100;
+        const hostHpBefore = player.hp;
+        const hostHit = raycastShot(700, 500, -1, 0, 400, "red");
+        if (hostHit && hostHit.pvpTarget) damagePvpTarget(hostHit.pvpTarget, 44);
+        const pvpGuestRifleHitsHost = hostHit && hostHit.pvpTarget === player && player.hp < hostHpBefore;
+        const towerHpBeforeSegment = redTower ? redTower.hp : 0;
+        const segmentHit = redTower ? pvpBulletHit({ prevX: redTower.x - 200, prevY: redTower.y, x: redTower.x + 200, y: redTower.y, r: 4, team: "blue" }) : false;
+        const pvpBulletSegmentHitsTower = !!redTower && segmentHit && redTower.hp < towerHpBeforeSegment;
         coop.role = "host";
         coop.hostMode = "pvp";
         coop.remote = { x: 500, y: 500, hp: 100, r: 24, collisionR: 15, last: performance.now(), weapon: "rifle" };
@@ -10301,6 +10360,10 @@
           pvpMinionsAdvance,
           pvpWorldSyncs,
           pvpMapSerializesMode,
+          pvpRifleHitsEnemyTower,
+          pvpRifleHitsEnemyMinion,
+          pvpGuestRifleHitsHost,
+          pvpBulletSegmentHitsTower,
           pvpHostStartsBlue,
           pvpGuestStartsRed,
           pvpCountdownBlocksStart,
