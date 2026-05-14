@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.46";
-    const BUILD_TIMESTAMP = "2026-05-14 20:20:39 KST";
+    const BUILD_VERSION = "2.1.47";
+    const BUILD_TIMESTAMP = "2026-05-14 20:42:18 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -275,6 +275,9 @@
     const pvpTowers = [];
     const pvpMinions = [];
     let pvpWaveTimer = 0;
+    let pvpCountdown = 0;
+    let pvpWinner = "";
+    let pvpRoundActive = false;
     const pvpLanePaths = {
       top: [
         { x: 270, y: 800 },
@@ -1366,6 +1369,9 @@
       pvpTowers.length = 0;
       pvpMinions.length = 0;
       pvpWaveTimer = 0.75;
+      pvpCountdown = 0;
+      pvpWinner = "";
+      pvpRoundActive = false;
     }
 
     function buildPvpMap() {
@@ -2860,6 +2866,32 @@
       return team === "red" ? path.slice().reverse() : path;
     }
 
+    function pvpSpawnForTeam(team) {
+      return team === "red" ? { x: 1925, y: 800, angle: Math.PI } : { x: 275, y: 800, angle: 0 };
+    }
+
+    function beginPvpCountdown() {
+      if (currentMapMode !== "pvp") return;
+      const blueStart = pvpSpawnForTeam("blue");
+      const redStart = pvpSpawnForTeam("red");
+      player.x = blueStart.x;
+      player.y = blueStart.y;
+      player.angle = blueStart.angle;
+      player.targetAngle = blueStart.angle;
+      if (coop.remote) {
+        coop.remote.x = redStart.x;
+        coop.remote.y = redStart.y;
+        coop.remote.tx = redStart.x;
+        coop.remote.ty = redStart.y;
+        coop.remote.team = "red";
+      }
+      pvpCountdown = 3.25;
+      pvpWinner = "";
+      pvpRoundActive = false;
+      state = "play";
+      coopToast("PVP STARTING", true);
+    }
+
     function spawnPvpWave() {
       for (const team of ["blue", "red"]) {
         for (const lane of ["top", "mid", "bot"]) {
@@ -2951,6 +2983,7 @@
           target.hp = Math.max(0, (target.hp || 0) - 34);
           target.hitFlash = 0.12;
           burst(bullet.x, bullet.y, "#c8e7a0", 7);
+          checkPvpVictory();
           return true;
         }
       }
@@ -2959,6 +2992,13 @@
 
     function updatePvp(dt) {
       if (currentMapMode !== "pvp") return;
+      if (pvpWinner) return;
+      if (pvpCountdown > 0) {
+        pvpCountdown = Math.max(0, pvpCountdown - dt);
+        pvpRoundActive = pvpCountdown <= 0;
+        return;
+      }
+      pvpRoundActive = true;
       pvpWaveTimer -= dt;
       if (pvpWaveTimer <= 0) {
         pvpWaveTimer = 10;
@@ -3019,6 +3059,26 @@
           pvpTowers.splice(i, 1);
         }
       }
+      checkPvpVictory();
+    }
+
+    function checkPvpVictory() {
+      if (currentMapMode !== "pvp" || pvpWinner) return;
+      const blueBase = pvpBases.find((base) => base.team === "blue");
+      const redBase = pvpBases.find((base) => base.team === "red");
+      if (blueBase && blueBase.hp <= 0) finishPvpRound("red");
+      else if (redBase && redBase.hp <= 0) finishPvpRound("blue");
+    }
+
+    function finishPvpRound(team) {
+      pvpWinner = team;
+      pvpRoundActive = false;
+      pvpCountdown = 0;
+      bullets.length = 0;
+      bombs.length = 0;
+      pvpMinions.length = 0;
+      burst(team === "blue" ? 1930 : 270, 800, team === "blue" ? "#8ed1ff" : "#ff8b78", 30);
+      coopToast((team === "blue" ? "BLUE" : "RED") + " WINS", true);
     }
 
     function update(dt) {
@@ -3048,6 +3108,11 @@
       }
 
       updateCoop(dt);
+      if (currentMapMode === "pvp" && (pvpCountdown > 0 || pvpWinner)) {
+        updatePvp(dt);
+        updateCamera(dt, isMobile ? mobileAimWorldTarget() : screenToWorld(mouse.x, mouse.y));
+        return;
+      }
       if (coopIsHostWorldClient()) {
         updateCoopGuestPlayer(dt);
         return;
@@ -4191,7 +4256,8 @@
       else if (state === "maptool") drawMapTool();
       else {
         drawGame();
-        if (state === "dead") drawDeath();
+        drawPvpRoundOverlay();
+        if (state === "dead" && !pvpWinner) drawDeath();
       }
       drawVoiceCommandFlash();
       drawBuildInfo(state === "play" || state === "dead" ? 0.72 : 0.92);
@@ -4205,6 +4271,37 @@
       ctx.save();
       ctx.fillStyle = "rgba(45, 120, 255, " + Math.max(0, Math.min(0.42, alpha)) + ")";
       ctx.fillRect(0, 0, width, height);
+      ctx.restore();
+    }
+
+    function drawPvpRoundOverlay() {
+      if (currentMapMode !== "pvp") return;
+      let title = "";
+      let sub = "";
+      if (pvpWinner) {
+        const localTeam = coop.role === "guest" ? "red" : "blue";
+        title = pvpWinner === localTeam ? "VICTORY" : "DEFEAT";
+        sub = (pvpWinner === "blue" ? "BLUE" : "RED") + " BASE DESTROYED";
+      } else if (pvpCountdown > 0) {
+        title = String(Math.max(1, Math.ceil(pvpCountdown)));
+        sub = "PVP STARTING";
+      } else {
+        return;
+      }
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,0.36)";
+      ctx.fillRect(0, 0, width, height);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.shadowColor = pvpWinner === "red" ? "rgba(255,80,70,.75)" : "rgba(90,180,255,.75)";
+      ctx.shadowBlur = 22;
+      ctx.fillStyle = pvpWinner ? "#f4eadb" : "#f4f5f2";
+      ctx.font = "900 " + Math.round(pvpWinner ? Math.min(74, width * 0.11) : Math.min(96, width * 0.18)) + "px Arial";
+      ctx.fillText(title, width / 2, height / 2 - 24);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "#d4e7ff";
+      ctx.font = "800 " + Math.round(Math.min(22, width * 0.034)) + "px Arial";
+      ctx.fillText(sub, width / 2, height / 2 + 44);
       ctx.restore();
     }
 
@@ -7328,6 +7425,7 @@
       coop.connectedAt = performance.now();
       if (coopPanel) coopPanel.style.display = "none";
       coopToast("NETWORK CONNECTED", true);
+      if (coop.role === "host" && coop.hostMode === "pvp") beginPvpCountdown();
       if (coop.role === "guest") {
         if (state !== "play") state = "play";
         coopResetGuestTransientEffects();
@@ -7899,6 +7997,9 @@
         t: "world",
         seq: coop.worldSeq,
         mapMode: currentMapMode,
+        pvpCountdown,
+        pvpWinner,
+        pvpRoundActive,
         kills,
         wave,
         shake: Math.min(10, Math.max(0, shake)),
@@ -7993,6 +8094,9 @@
         coop.worldRecvAt = performance.now();
         if (state !== "play" && state !== "dead") state = "play";
         currentMapMode = data.mapMode === "pvp" ? "pvp" : "default";
+        pvpCountdown = Number.isFinite(data.pvpCountdown) ? Math.max(0, Number(data.pvpCountdown)) : pvpCountdown;
+        pvpWinner = typeof data.pvpWinner === "string" ? data.pvpWinner : "";
+        pvpRoundActive = !!data.pvpRoundActive;
         kills = Number.isFinite(data.kills) ? data.kills : kills;
         wave = Number.isFinite(data.wave) ? data.wave : wave;
         fixtureBoost = Number.isFinite(data.fixtureBoost) ? data.fixtureBoost : fixtureBoost;
@@ -9434,6 +9538,9 @@
       const savedPvpTowers = pvpTowers.slice();
       const savedPvpMinions = pvpMinions.slice();
       const savedPvpWaveTimer = pvpWaveTimer;
+      const savedPvpCountdown = pvpCountdown;
+      const savedPvpWinner = pvpWinner;
+      const savedPvpRoundActive = pvpRoundActive;
       const savedMapMode = currentMapMode;
       const savedState = state;
       const savedIntroTimer = introTimer;
@@ -9441,7 +9548,7 @@
       const savedIntroSoundStarted = introSoundStarted;
       const savedCamera = { x: camera.x, y: camera.y, zoom: camera.zoom };
       const savedInventory = { selectedWeapon, rifleAmmo, rifleReload, bombCount, flameAmmo, iceAmmo, barricadeCount, itemDropMode, dashCharges, dashRecharge, healerEnergy, healerReserve, healerReload, healerActive, healerMode, healerActionTimer };
-      const savedCoop = { role: coop.role, connected: coop.connected, remote: coop.remote, worldSeq: coop.worldSeq, mapSeq: coop.mapSeq, guestClass: coop.guestClass, status: coop.status };
+      const savedCoop = { role: coop.role, connected: coop.connected, remote: coop.remote, worldSeq: coop.worldSeq, mapSeq: coop.mapSeq, guestClass: coop.guestClass, hostMode: coop.hostMode, status: coop.status };
       try {
         walls.length = 0;
         doors.length = 0;
@@ -10057,6 +10164,21 @@
         const pvpPayload = coopWorldPayload();
         const pvpWorldSyncs = pvpPayload.mapMode === "pvp" && pvpPayload.pvpTowers.length === pvpTowers.length && pvpPayload.pvpMinions.length === pvpMinions.length;
         const pvpMapSerializesMode = serializeMapData().mapMode === "pvp";
+        coop.role = "host";
+        coop.hostMode = "pvp";
+        coop.remote = { x: 500, y: 500, hp: 100, r: 24, collisionR: 15, last: performance.now(), weapon: "rifle" };
+        beginPvpCountdown();
+        const pvpHostStartsBlue = player.x < world.w / 2 && player.angle === 0;
+        const pvpGuestStartsRed = coop.remote.x > world.w / 2 && coop.remote.team === "red";
+        const countdownBefore = pvpCountdown;
+        const frozenMinion = pvpMinions[0] ? { x: pvpMinions[0].x, y: pvpMinions[0].y } : { x: 0, y: 0 };
+        updatePvp(0.5);
+        const pvpCountdownBlocksStart = pvpCountdown < countdownBefore && !pvpRoundActive && pvpMinions[0] && Math.hypot(pvpMinions[0].x - frozenMinion.x, pvpMinions[0].y - frozenMinion.y) < 0.1;
+        updatePvp(3.2);
+        const pvpRoundActivatesAfterCountdown = pvpRoundActive && pvpCountdown === 0;
+        pvpBases.find((base) => base.team === "red").hp = 0;
+        checkPvpVictory();
+        const pvpBaseDestroyedEndsRound = pvpWinner === "blue" && !pvpRoundActive && pvpMinions.length === 0;
         player.x = savedPlayer.x;
         player.y = savedPlayer.y;
         player.collisionR = savedPlayer.collisionR;
@@ -10178,7 +10300,12 @@
           pvpInitialWaveSpawns,
           pvpMinionsAdvance,
           pvpWorldSyncs,
-          pvpMapSerializesMode
+          pvpMapSerializesMode,
+          pvpHostStartsBlue,
+          pvpGuestStartsRed,
+          pvpCountdownBlocksStart,
+          pvpRoundActivatesAfterCountdown,
+          pvpBaseDestroyedEndsRound
         };
       } finally {
         walls.length = 0;
@@ -10216,6 +10343,9 @@
         for (const tower of savedPvpTowers) pvpTowers.push(tower);
         for (const minion of savedPvpMinions) pvpMinions.push(minion);
         pvpWaveTimer = savedPvpWaveTimer;
+        pvpCountdown = savedPvpCountdown;
+        pvpWinner = savedPvpWinner;
+        pvpRoundActive = savedPvpRoundActive;
         currentMapMode = savedMapMode;
         state = savedState;
         introTimer = savedIntroTimer;
@@ -10248,6 +10378,7 @@
         coop.worldSeq = savedCoop.worldSeq;
         coop.mapSeq = savedCoop.mapSeq;
         coop.guestClass = savedCoop.guestClass;
+        coop.hostMode = savedCoop.hostMode;
         coop.status = savedCoop.status;
         mobileControls.weaponTouchId = null;
         mobileControls.weaponDragX = 0;
