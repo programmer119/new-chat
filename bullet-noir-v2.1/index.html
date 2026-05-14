@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.43";
-    const BUILD_TIMESTAMP = "2026-05-14 18:44:53 KST";
+    const BUILD_VERSION = "2.1.44";
+    const BUILD_TIMESTAMP = "2026-05-14 19:20:20 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -284,15 +284,21 @@
     let dashCharges = 3;
     let dashRecharge = 0;
     let healerEnergy = 10;
+    let healerReserve = 0;
     let healerReload = 0;
     let healerActive = false;
+    let healerMode = "none";
     let healerPath = null;
     let healerTargetX = 0;
     let healerTargetY = 0;
     let healerPlusTimer = 0;
+    let healerActionTimer = 0;
     const HEAL_TARGET_RADIUS = 92;
     const HEAL_PATH_MAX = 315;
     const HEAL_RATE = 9.75;
+    const HEAL_DRAIN_RATE = 8.5;
+    const HEAL_RESERVE_MAX = 8;
+    const HEAL_RESERVE_GAIN = 0.55;
     const lightCanvas = document.createElement("canvas");
     const lightCtx = lightCanvas.getContext("2d");
 
@@ -2018,6 +2024,36 @@
         coopApplyRemoteIceAction(action, data);
       } else if (action.type === "barricade") {
         coopApplyRemoteBarricadeAction(action, data);
+      } else if (action.type === "healerDrain") {
+        coopApplyRemoteHealerDrain(action, data);
+      }
+    }
+
+    function coopApplyRemoteHealerDrain(action, data) {
+      const ax = Number(action.x) || Number(data.healTargetX) || Number(data.x) || 0;
+      const ay = Number(action.y) || Number(data.healTargetY) || Number(data.y) || 0;
+      const sourceX = Number(action.px) || Number(data.x) || ax;
+      const sourceY = Number(action.py) || Number(data.y) || ay;
+      let best = null;
+      let bestD = Infinity;
+      for (const enemy of enemies) {
+        if ((enemy.hp || 0) <= 0) continue;
+        const d = dist2(enemy.x, enemy.y, ax, ay);
+        if (d < bestD) {
+          bestD = d;
+          best = enemy;
+        }
+      }
+      if (!best || bestD > HEAL_TARGET_RADIUS * HEAL_TARGET_RADIUS) return;
+      const path = findHealPath(sourceX, sourceY, best.x, best.y, HEAL_PATH_MAX);
+      if (!path) return;
+      const amount = clamp(Number(action.amount) || HEAL_DRAIN_RATE * 0.15, 0.1, 5);
+      best.hp = Math.max(0, (Number(best.hp) || 0) - amount);
+      best.hitFlash = 0.16;
+      addHealPlus(best.x, best.y, false);
+      if (best.hp <= 0) {
+        const index = enemies.indexOf(best);
+        if (index >= 0) killEnemy(best, index);
       }
     }
 
@@ -4731,6 +4767,8 @@
     }
 
     function drawEnemy(e) {
+      e.maxHp = Number(e.maxHp) || enemyMaxHp(e.kind || "shooter", !!e.fast);
+      e.hp = Number.isFinite(Number(e.hp)) ? Number(e.hp) : e.maxHp;
       ctx.save();
       ctx.translate(e.x, e.y);
       if (e.dropTime > 0) {
@@ -4754,7 +4792,7 @@
       ctx.fillStyle = "rgba(0,0,0,0.45)";
       ctx.fillRect(e.x - 18, e.y - e.r - 16, 36, 4);
       ctx.fillStyle = e.raidLeader ? "#ff4a32" : (e.raidAggressive ? "#51b8ff" : (e.kind === "melee" ? "#cf6b4e" : (e.kind === "flamer" ? "#ef8a3a" : (e.fast ? "#ddbb55" : "#9fd06d"))));
-      ctx.fillRect(e.x - 18, e.y - e.r - 16, Math.max(0, 36 * e.hp / (e.maxHp || (e.fast ? 34 : 58 + wave * 4))), 4);
+      ctx.fillRect(e.x - 18, e.y - e.r - 16, Math.max(0, 36 * e.hp / e.maxHp), 4);
     }
 
     function drawFrozenOverlay(e) {
@@ -5358,13 +5396,14 @@
       ctx.globalAlpha = 1;
     }
 
-    function addHealPlus(x, y) {
+    function addHealPlus(x, y, positive = true) {
       healPluses.push({
         x: x + (Math.random() - 0.5) * 18,
         y: y - 38 + (Math.random() - 0.5) * 6,
         life: 0.64,
         maxLife: 0.64,
-        s: 0.9 + Math.random() * 0.25
+        s: 0.9 + Math.random() * 0.25,
+        positive
       });
       if (healPluses.length > 18) healPluses.shift();
     }
@@ -5384,11 +5423,11 @@
         ctx.globalAlpha = alpha;
         ctx.shadowColor = "rgba(115,255,190,0.9)";
         ctx.shadowBlur = 12;
-        ctx.strokeStyle = "rgba(14,60,42,0.9)";
+        ctx.strokeStyle = plus.positive ? "rgba(14,60,42,0.9)" : "rgba(62,12,18,0.92)";
         ctx.lineWidth = 4;
-        ctx.strokeText("+", 0, 0);
-        ctx.fillStyle = "rgba(170,255,214,0.96)";
-        ctx.fillText("+", 0, 0);
+        ctx.strokeText(plus.positive ? "+" : "-", 0, 0);
+        ctx.fillStyle = plus.positive ? "rgba(170,255,214,0.96)" : "rgba(255,120,145,0.96)";
+        ctx.fillText(plus.positive ? "+" : "-", 0, 0);
         ctx.restore();
       }
       ctx.restore();
@@ -5921,8 +5960,10 @@
     function coopSelectGuestClass(kind) {
       coop.guestClass = kind === "healer" ? "healer" : "gunner";
       healerEnergy = 10;
+      healerReserve = 0;
       healerReload = 0;
       healerActive = false;
+      healerMode = "none";
       return coopChooseGuest();
     }
 
@@ -7209,6 +7250,8 @@
         guestClass: coop.guestClass || "gunner",
         healActive: healerActive,
         healEnergy: healerEnergy,
+        healReserve: healerReserve,
+        healMode: healerMode,
         healReload: healerReload,
         healTargetX: healerTargetX,
         healTargetY: healerTargetY,
@@ -7326,12 +7369,14 @@
       remote.guestClass = data.guestClass || "gunner";
       remote.healActive = !!data.healActive;
       remote.healEnergy = Number(data.healEnergy) || 0;
+      remote.healReserve = Number(data.healReserve) || 0;
+      remote.healMode = data.healMode || "none";
       remote.healReload = Number(data.healReload) || 0;
       remote.healTargetX = Number(data.healTargetX) || remote.x;
       remote.healTargetY = Number(data.healTargetY) || remote.y;
       remote.moving = !!data.moving;
       remote._channel = holder.channel || coop.channel || null;
-      if (coop.role === "host" && remote.guestClass === "healer" && remote.healActive && player.hp > 0) {
+      if (coop.role === "host" && remote.guestClass === "healer" && remote.healActive && remote.healMode === "ally" && player.hp > 0 && player.hp < 100) {
         const healDt = Math.max(0.016, Math.min(0.08, (now - (remote.healAppliedAt || now - 33)) / 1000));
         remote.healAppliedAt = now;
         const targetClose = Math.hypot(remote.healTargetX - player.x, remote.healTargetY - player.y) <= HEAL_TARGET_RADIUS;
@@ -7351,7 +7396,23 @@
           remote.healPath = null;
         }
       } else {
-        remote.healPath = null;
+        if (coop.role === "host" && remote.guestClass === "healer" && remote.healActive && remote.healMode === "enemy") {
+          let best = null;
+          let bestD = Infinity;
+          for (const enemy of enemies) {
+            if ((enemy.hp || 0) <= 0) continue;
+            const d = dist2(remote.healTargetX, remote.healTargetY, enemy.x, enemy.y);
+            if (d < bestD) {
+              bestD = d;
+              best = enemy;
+            }
+          }
+          remote.healPath = best && bestD <= HEAL_TARGET_RADIUS * HEAL_TARGET_RADIUS
+            ? findHealPath(remote.x, remote.y, best.x, best.y, HEAL_PATH_MAX)
+            : null;
+        } else {
+          remote.healPath = null;
+        }
       }
       coopApplyRemoteShotDamage(data, holder);
       coopApplyRemoteAction(data, holder);
@@ -7757,12 +7818,14 @@
     function updateHealerGuest(dt, aimTarget) {
       if (coop.guestClass !== "healer") {
         healerActive = false;
+        healerMode = "none";
         healerPath = null;
         return;
       }
       if (healerReload > 0) {
         healerReload = Math.max(0, healerReload - dt);
         healerActive = false;
+        healerMode = "none";
         healerPath = null;
         if (healerReload <= 0) healerEnergy = 10;
         return;
@@ -7770,29 +7833,73 @@
       const host = coop.remote;
       healerTargetX = aimTarget ? aimTarget.x : player.x;
       healerTargetY = aimTarget ? aimTarget.y : player.y;
-      const aimClose = !!host && Math.hypot(healerTargetX - host.x, healerTargetY - host.y) <= HEAL_TARGET_RADIUS;
-      const path = aimClose && host && (host.hp || 0) > 0 && healerEnergy > 0
-        ? findHealPath(player.x, player.y, host.x, host.y, HEAL_PATH_MAX)
-        : null;
+      let target = null;
+      let mode = "none";
+      if (host && (host.hp || 0) > 0 && host.hp < 100 && Math.hypot(healerTargetX - host.x, healerTargetY - host.y) <= HEAL_TARGET_RADIUS) {
+        target = host;
+        mode = "ally";
+      } else {
+        let bestEnemy = null;
+        let bestD = Infinity;
+        for (const enemy of enemies) {
+          if ((enemy.hp || 0) <= 0) continue;
+          const d = dist2(healerTargetX, healerTargetY, enemy.x, enemy.y);
+          if (d < bestD) {
+            bestD = d;
+            bestEnemy = enemy;
+          }
+        }
+        if (bestEnemy && bestD <= HEAL_TARGET_RADIUS * HEAL_TARGET_RADIUS) {
+          target = bestEnemy;
+          mode = "enemy";
+        }
+      }
+      const available = healerEnergy > 0 || healerReserve > 0 || mode === "enemy";
+      const path = target && available ? findHealPath(player.x, player.y, target.x, target.y, HEAL_PATH_MAX) : null;
       healerPath = path;
+      healerMode = path ? mode : "none";
       healerActive = !!path;
       if (healerActive) {
-        healerEnergy = Math.max(0, healerEnergy - dt);
-        voiceCommandStatus = "HEAL " + Math.ceil(healerEnergy) + "s";
+        if (healerMode === "enemy") {
+          const amount = HEAL_DRAIN_RATE * dt;
+          target.hp = Math.max(0, (Number(target.hp) || 0) - amount);
+          target.hitFlash = 0.14;
+          if (player.hp < 100) player.hp = Math.min(100, player.hp + amount * 0.78);
+          else healerReserve = Math.min(HEAL_RESERVE_MAX, healerReserve + dt * HEAL_RESERVE_GAIN);
+          healerActionTimer -= dt;
+          if (healerActionTimer <= 0) {
+            healerActionTimer = 0.15;
+            const action = coopRememberAction("healerDrain", { x: target.x, y: target.y });
+            action.amount = HEAL_DRAIN_RATE * 0.15;
+            coopSendNow();
+          }
+          if (target.hp <= 0) {
+            const index = enemies.indexOf(target);
+            if (index >= 0) killEnemy(target, index);
+          }
+          voiceCommandStatus = player.hp < 100 ? "DRAIN HP" : "RESERVE +" + healerReserve.toFixed(1) + "s";
+        } else {
+          const spend = dt;
+          if (healerEnergy > 0) healerEnergy = Math.max(0, healerEnergy - spend);
+          else healerReserve = Math.max(0, healerReserve - spend);
+          voiceCommandStatus = "HEAL " + Math.ceil(healerEnergy + healerReserve) + "s";
+          if (healerEnergy <= 0 && healerReserve <= 0) {
+            healerReload = 3.5;
+            healerActive = false;
+            healerMode = "none";
+            healerPath = null;
+            voiceCommandStatus = "HEAL RELOAD";
+            voiceCommandStatusTimer = 1.1;
+          }
+        }
         voiceCommandStatusTimer = 0.25;
         healerPlusTimer -= dt;
         if (healerPlusTimer <= 0) {
           healerPlusTimer = 0.28;
-          addHealPlus(host.x, host.y);
-        }
-        if (healerEnergy <= 0) {
-          healerReload = 3.5;
-          healerActive = false;
-          healerPath = null;
-          voiceCommandStatus = "HEAL RELOAD";
-          voiceCommandStatusTimer = 1.1;
+          addHealPlus(target.x, target.y, healerMode !== "enemy");
         }
       } else {
+        healerMode = "none";
         healerPlusTimer = Math.min(healerPlusTimer, 0.1);
       }
     }
@@ -7832,8 +7939,8 @@
     function drawCoopHealLinks() {
       if (coop.role === "host") {
         for (const remote of coopRemotePeers()) {
-          if (remote.guestClass === "healer" && remote.healActive && (remote.hp || 0) > 0 && player.hp > 0) {
-            drawHealBeam(remote.healPath || [remote, player]);
+          if (remote.guestClass === "healer" && remote.healActive && (remote.hp || 0) > 0 && remote.healPath) {
+            drawHealBeam(remote.healPath);
           }
         }
       } else if (coop.role === "guest" && coop.guestClass === "healer" && healerActive && coop.remote && (coop.remote.hp || 0) > 0) {
@@ -8927,7 +9034,7 @@
       const savedIntroStarted = introStarted;
       const savedIntroSoundStarted = introSoundStarted;
       const savedCamera = { x: camera.x, y: camera.y, zoom: camera.zoom };
-      const savedInventory = { selectedWeapon, rifleAmmo, rifleReload, bombCount, flameAmmo, iceAmmo, barricadeCount, itemDropMode, dashCharges, dashRecharge, healerEnergy, healerReload, healerActive };
+      const savedInventory = { selectedWeapon, rifleAmmo, rifleReload, bombCount, flameAmmo, iceAmmo, barricadeCount, itemDropMode, dashCharges, dashRecharge, healerEnergy, healerReserve, healerReload, healerActive, healerMode, healerActionTimer };
       const savedCoop = { role: coop.role, connected: coop.connected, remote: coop.remote, worldSeq: coop.worldSeq, mapSeq: coop.mapSeq, guestClass: coop.guestClass, status: coop.status };
       try {
         walls.length = 0;
@@ -9471,7 +9578,7 @@
         player.hp = 55;
         const healBeforeHostApply = player.hp;
         coop.remote = { x: 620, y: 500, hp: 100, r: 24, collisionR: 15, last: performance.now() - 100, guestClass: "healer", healActive: true, weapon: "healer" };
-        coopApplyRemotePeerState({ x: 620, y: 500, hp: 100, r: 24, collisionR: 15, guestClass: "healer", healActive: true, healTargetX: player.x, healTargetY: player.y, weapon: "healer", ts: performance.now() - 500 });
+        coopApplyRemotePeerState({ x: 620, y: 500, hp: 100, r: 24, collisionR: 15, guestClass: "healer", healActive: true, healMode: "ally", healTargetX: player.x, healTargetY: player.y, weapon: "healer", ts: performance.now() - 500 });
         const healerLinkHealsHost = player.hp > healBeforeHostApply;
         const healerBeamDrawable = typeof drawHealBeam === "function";
         const healerPlusAppearsOnHeal = healPluses.length > 0;
@@ -9482,9 +9589,11 @@
         player.y = 500;
         coop.remote = { x: 620, y: 500, hp: 100, r: 24, collisionR: 15, last: performance.now(), weapon: "rifle" };
         healerEnergy = 10;
+        healerReserve = 0;
         healerReload = 0;
         updateHealerGuest(0.2, { x: 900, y: 500 });
         const healerNeedsAimTargetNearAlly = !healerActive;
+        coop.remote.hp = 60;
         addWall(552, 420, 42, 210);
         updateHealerGuest(0.2, { x: coop.remote.x, y: coop.remote.y });
         const healerBlockedWhenNoPath = !healerActive;
@@ -9493,6 +9602,29 @@
         addWall(552, 470, 42, 160);
         updateHealerGuest(0.2, { x: coop.remote.x, y: coop.remote.y });
         const healerPathBendsThroughOpening = healerActive && healerPath && healerPath.length > 2;
+        walls.length = 0;
+        doors.length = 0;
+        enemies.length = 0;
+        player.x = 500;
+        player.y = 500;
+        player.hp = 72;
+        coop.remote = { x: 760, y: 500, hp: 100, r: 24, collisionR: 15, last: performance.now(), weapon: "rifle" };
+        healerEnergy = 10;
+        healerReserve = 0;
+        healerReload = 0;
+        enemies.push({ x: 620, y: 500, r: 24, collisionR: 18, hp: 80, maxHp: 80, kind: "shooter", fast: false, freeze: 0 });
+        updateHealerGuest(0.5, { x: 620, y: 500 });
+        const healerDrainsEnemyAndSelfHeals = healerMode === "enemy" && enemies[0].hp < 80 && player.hp > 72;
+        player.hp = 100;
+        const reserveBeforeDrain = healerReserve;
+        updateHealerGuest(0.5, { x: 620, y: 500 });
+        const healerDrainBuildsReserveAtFullHp = healerReserve > reserveBeforeDrain;
+        const healerDoesNotHealFullAlly = (() => {
+          enemies.length = 0;
+          coop.remote = { x: 620, y: 500, hp: 100, r: 24, collisionR: 15, last: performance.now(), weapon: "rifle" };
+          updateHealerGuest(0.2, { x: coop.remote.x, y: coop.remote.y });
+          return !healerActive;
+        })();
         player.x = savedPlayer.x;
         player.y = savedPlayer.y;
         player.collisionR = savedPlayer.collisionR;
@@ -9603,7 +9735,10 @@
           healerPlusAppearsOnHeal,
           healerNeedsAimTargetNearAlly,
           healerBlockedWhenNoPath,
-          healerPathBendsThroughOpening
+          healerPathBendsThroughOpening,
+          healerDrainsEnemyAndSelfHeals,
+          healerDrainBuildsReserveAtFullHp,
+          healerDoesNotHealFullAlly
         };
       } finally {
         walls.length = 0;
@@ -9652,10 +9787,13 @@
         dashCharges = savedInventory.dashCharges;
         dashRecharge = savedInventory.dashRecharge;
         healerEnergy = savedInventory.healerEnergy;
+        healerReserve = savedInventory.healerReserve;
         healerReload = savedInventory.healerReload;
         healerActive = savedInventory.healerActive;
+        healerMode = savedInventory.healerMode;
         healerPath = null;
         healerPlusTimer = 0;
+        healerActionTimer = savedInventory.healerActionTimer;
         coop.role = savedCoop.role;
         coop.connected = savedCoop.connected;
         coop.remote = savedCoop.remote;
