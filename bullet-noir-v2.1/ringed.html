@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.52";
-    const BUILD_TIMESTAMP = "2026-05-14 23:09:00 KST";
+    const BUILD_VERSION = "2.1.53";
+    const BUILD_TIMESTAMP = "2026-05-14 23:18:00 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -1440,12 +1440,12 @@
       const towerSpecs = [
         ["blue", "base", 405, 800],
         ["red", "base", 1795, 800],
-        ["blue", "top", 760, 545],
-        ["red", "top", 1440, 545],
+        ["blue", "top", 760, 430],
+        ["red", "top", 1440, 430],
         ["blue", "mid", 790, 800],
         ["red", "mid", 1410, 800],
-        ["blue", "bot", 760, 1055],
-        ["red", "bot", 1440, 1055]
+        ["blue", "bot", 760, 1170],
+        ["red", "bot", 1440, 1170]
       ];
       for (const [team, lane, x, y] of towerSpecs) {
         pvpTowers.push({ team, lane, x, y, r: lane === "base" ? 34 : 30, hp: lane === "base" ? 560 : 420, maxHp: lane === "base" ? 560 : 420, shoot: 0.5 });
