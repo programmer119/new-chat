@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.38";
-    const BUILD_TIMESTAMP = "2026-05-13 21:50:51 KST";
+    const BUILD_VERSION = "2.1.39";
+    const BUILD_TIMESTAMP = "2026-05-14 16:18:15 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -188,6 +188,8 @@
       aimY: 0,
       aimScreenX: 0,
       aimScreenY: 0,
+      aimStartX: 0,
+      aimStartY: 0,
       aimTouchX: 0,
       aimTouchY: 0,
       shoot: false,
@@ -7154,14 +7156,13 @@
       const safeRight = 22;
       const attackR = Math.min(58, Math.max(52, width * 0.105));
       const landscape = width > height * 1.18;
-      const attackY = landscape ? height - Math.max(84, Math.min(112, height * 0.23)) : height - 112;
-      const attackX = landscape ? width - Math.max(88, Math.min(112, width * 0.12)) : width - 88;
+      const attackY = height - 112;
+      const attackX = width - 88;
       const actionX = landscape ? Math.max(16, attackX - attackR - gap - base) : width - safeRight - base;
       const weaponY = landscape ? clamp(attackY - base * 0.42, 98, height - base - 14) : attackY - attackR - gap - base;
       const dodgeY = landscape ? clamp(weaponY - base - gap, 98, height - base - 14) : attackY - attackR - gap * 2 - base * 2;
-      const stickY = landscape ? attackY : height - 112;
       return {
-        stick: { x: landscape ? Math.max(84, Math.min(112, width * 0.12)) : 88, y: stickY, r: 58 },
+        stick: { x: 88, y: height - 112, r: 58 },
         attack: { x: attackX, y: attackY, r: attackR },
         weapon: { id: "weapon", label: weaponNames[selectedWeapon], x: actionX, y: weaponY, w: base, h: base },
         dodge: { id: "dodge", label: "DASH", x: actionX, y: dodgeY, w: base, h: base }
@@ -7543,6 +7544,8 @@
           if (selectedWeapon === "ice") fireIceStorm();
           if (selectedWeapon === "barricade") placeBarricadeFromAim();
           mobileControls.aimId = null;
+          mobileControls.aimStartX = 0;
+          mobileControls.aimStartY = 0;
         }
         if (touch.identifier === mobileControls.weaponTouchId) {
           const p = touchPoint(touch);
@@ -7560,6 +7563,8 @@
         mobileControls.shoot = false;
         mobileControls.aimKnobX = 0;
         mobileControls.aimKnobY = 0;
+        mobileControls.aimStartX = 0;
+        mobileControls.aimStartY = 0;
         mobileControls.aimTouchX = 0;
         mobileControls.aimTouchY = 0;
       }
@@ -7618,6 +7623,15 @@
     }
 
     function updateMobileAttackStick(x, y, force) {
+      if (force || (!mobileControls.aimStartX && !mobileControls.aimStartY)) {
+        mobileControls.aimStartX = x;
+        mobileControls.aimStartY = y;
+        mobileControls.aimTouchX = x;
+        mobileControls.aimTouchY = y;
+        mobileControls.aimKnobX = 0;
+        mobileControls.aimKnobY = 0;
+        return;
+      }
       const hadTouch = mobileControls.aimTouchX || mobileControls.aimTouchY;
       const lastX = hadTouch ? mobileControls.aimTouchX : x;
       const lastY = hadTouch ? mobileControls.aimTouchY : y;
@@ -7626,8 +7640,8 @@
       const dragD = Math.hypot(dragX, dragY);
       if (!force && dragD < 0.12) return;
       const stick = mobileButtonRects().attack;
-      const dx = x - stick.x;
-      const dy = y - stick.y;
+      const dx = x - mobileControls.aimStartX;
+      const dy = y - mobileControls.aimStartY;
       const d = Math.hypot(dx, dy) || 1;
       const limit = stick.r * 0.72;
       const amount = Math.min(limit, d);
