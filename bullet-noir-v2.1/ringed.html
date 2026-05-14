@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.44";
-    const BUILD_TIMESTAMP = "2026-05-14 19:20:20 KST";
+    const BUILD_VERSION = "2.1.45";
+    const BUILD_TIMESTAMP = "2026-05-14 20:09:01 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -7943,9 +7943,16 @@
             drawHealBeam(remote.healPath);
           }
         }
-      } else if (coop.role === "guest" && coop.guestClass === "healer" && healerActive && coop.remote && (coop.remote.hp || 0) > 0) {
-        drawHealBeam(healerPath || [player, coop.remote]);
+      } else if (localHealerLinkVisible()) {
+        if (healerMode === "enemy" && healerPath) drawHealBeam(healerPath);
+        else if (coop.remote && (coop.remote.hp || 0) > 0) drawHealBeam(healerPath || [player, coop.remote]);
       }
+    }
+
+    function localHealerLinkVisible() {
+      if (coop.role !== "guest" || coop.guestClass !== "healer" || !healerActive) return false;
+      if (healerMode === "enemy") return !!healerPath;
+      return !!coop.remote && (coop.remote.hp || 0) > 0;
     }
 
     function drawHealBeam(pathOrX1, y1, x2, y2) {
@@ -9605,6 +9612,9 @@
         walls.length = 0;
         doors.length = 0;
         enemies.length = 0;
+        coop.role = "guest";
+        coop.connected = true;
+        coop.guestClass = "healer";
         player.x = 500;
         player.y = 500;
         player.hp = 72;
@@ -9615,6 +9625,8 @@
         enemies.push({ x: 620, y: 500, r: 24, collisionR: 18, hp: 80, maxHp: 80, kind: "shooter", fast: false, freeze: 0 });
         updateHealerGuest(0.5, { x: 620, y: 500 });
         const healerDrainsEnemyAndSelfHeals = healerMode === "enemy" && enemies[0].hp < 80 && player.hp > 72;
+        coop.remote.hp = 0;
+        const healerEnemyLinkVisibleWhenHostDead = localHealerLinkVisible() === true;
         player.hp = 100;
         const reserveBeforeDrain = healerReserve;
         updateHealerGuest(0.5, { x: 620, y: 500 });
@@ -9737,6 +9749,7 @@
           healerBlockedWhenNoPath,
           healerPathBendsThroughOpening,
           healerDrainsEnemyAndSelfHeals,
+          healerEnemyLinkVisibleWhenHostDead,
           healerDrainBuildsReserveAtFullHp,
           healerDoesNotHealFullAlly
         };
