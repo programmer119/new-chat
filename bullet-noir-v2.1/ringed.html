@@ -66,8 +66,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.48";
-    const BUILD_TIMESTAMP = "2026-05-14 21:58:00 KST";
+    const BUILD_VERSION = "2.1.49";
+    const BUILD_TIMESTAMP = "2026-05-14 22:21:00 KST";
     const METERED_TURN_API_URL = "https://button.metered.live/api/v1/turn/credentials?apiKey=4a133f37a5ae9d2d73d33a3e7672ce4ee6ac";
     let meteredIceServersPromise = null;
 
@@ -281,10 +281,13 @@
     const pvpLanePaths = {
       top: [
         { x: 270, y: 800 },
-        { x: 420, y: 500 },
-        { x: 760, y: 280 },
-        { x: 1370, y: 250 },
-        { x: 1780, y: 500 },
+        { x: 520, y: 800 },
+        { x: 875, y: 800 },
+        { x: 875, y: 622 },
+        { x: 875, y: 420 },
+        { x: 1320, y: 420 },
+        { x: 1320, y: 622 },
+        { x: 1680, y: 800 },
         { x: 1930, y: 800 }
       ],
       mid: [
@@ -296,10 +299,13 @@
       ],
       bot: [
         { x: 270, y: 800 },
-        { x: 420, y: 1100 },
-        { x: 760, y: 1320 },
-        { x: 1370, y: 1350 },
-        { x: 1780, y: 1100 },
+        { x: 520, y: 800 },
+        { x: 875, y: 800 },
+        { x: 875, y: 978 },
+        { x: 875, y: 1180 },
+        { x: 1320, y: 1180 },
+        { x: 1320, y: 978 },
+        { x: 1680, y: 800 },
         { x: 1930, y: 800 }
       ]
     };
@@ -1382,12 +1388,36 @@
       addWall(0, 0, t, world.h);
       addWall(world.w - t, 0, t, world.h);
 
-      addWall(520, 610, 430, 44);
-      addWall(520, 946, 430, 44);
-      addWall(1248, 610, 430, 44);
-      addWall(1248, 946, 430, 44);
-      addWall(1005, 360, 42, 320);
-      addWall(1155, 920, 42, 320);
+      addWall(90, 126, 2020, 44);
+      addWall(90, 1430, 2020, 44);
+      addWall(480, 250, 44, 270);
+      addWall(1676, 250, 44, 270);
+      addWall(480, 1080, 44, 270);
+      addWall(1676, 1080, 44, 270);
+
+      addWall(42, 600, 768, 44);
+      addDoor(810, 600, 130, 44, "h");
+      addWall(940, 600, 315, 44);
+      addDoor(1255, 600, 130, 44, "h");
+      addWall(1385, 600, 773, 44);
+
+      addWall(42, 956, 768, 44);
+      addDoor(810, 956, 130, 44, "h");
+      addWall(940, 956, 315, 44);
+      addDoor(1255, 956, 130, 44, "h");
+      addWall(1385, 956, 773, 44);
+
+      addWall(766, 520, 44, 232);
+      addWall(940, 520, 44, 232);
+      addWall(1211, 520, 44, 232);
+      addWall(1385, 520, 44, 232);
+      addWall(766, 848, 44, 232);
+      addWall(940, 848, 44, 232);
+      addWall(1211, 848, 44, 232);
+      addWall(1385, 848, 44, 232);
+
+      addWall(1005, 300, 42, 280);
+      addWall(1155, 1020, 42, 280);
 
       addFixture(270, 800, 84, 14, 0, 230, 1.1);
       addFixture(1930, 800, 84, 14, Math.PI, 230, 1.1);
@@ -1413,8 +1443,7 @@
       }
       props.push(
         { x: 840, y: 520, type: "rock", s: 0.85, a: -0.25, hp: 120, maxHp: 120 },
-        { x: 1360, y: 1080, type: "rock", s: 0.85, a: 0.25, hp: 120, maxHp: 120 },
-        { x: 1095, y: 795, type: "crate", s: 0.72, a: 0.12, hp: 70, maxHp: 70 }
+        { x: 1360, y: 1080, type: "rock", s: 0.85, a: 0.25, hp: 120, maxHp: 120 }
       );
       spawnPvpWave();
     }
@@ -3981,6 +4010,13 @@
             holdingEnemy = true;
           }
           if (requestedByEnemy && holdingEnemy) break;
+        }
+        if (currentMapMode === "pvp" && !(requestedByEnemy && holdingEnemy)) {
+          for (const minion of pvpMinions) {
+            if (isInDoorApproach(minion, door)) requestedByEnemy = true;
+            if (isInDoorHoldZone(minion, door)) holdingEnemy = true;
+            if (requestedByEnemy && holdingEnemy) break;
+          }
         }
         const requested = requestedByPlayer || requestedByRemote || requestedByEnemy;
         const occupiedWhileOpen = door.open > 0.08 && (holdingPlayer || holdingRemote || holdingEnemy);
@@ -10203,16 +10239,23 @@
         const pvpPayload = coopWorldPayload();
         const pvpWorldSyncs = pvpPayload.mapMode === "pvp" && pvpPayload.pvpTowers.length === pvpTowers.length && pvpPayload.pvpMinions.length === pvpMinions.length;
         const pvpMapSerializesMode = serializeMapData().mapMode === "pvp";
+        const pvpLaneDoors = doors.length >= 4 && doors.every((door) => door.axis === "h");
+        const pvpNonLaneSpacesBlocked = hitsSolid(1100, 590, 16) && hitsSolid(1100, 1010, 16);
+        const pvpClosedSideDoorBlocks = hitsSolid(875, 622, 16);
+        doors[0].open = 1;
+        const pvpOpenSideDoorPasses = !hitsSolid(875, 622, 16);
+        doors[0].open = 0;
         const redTower = pvpTowers.find((tower) => tower.team === "red" && tower.lane === "mid");
         const redTowerHpBefore = redTower ? redTower.hp : 0;
         const towerHit = redTower ? raycastShot(redTower.x - 220, redTower.y, 1, 0, 500, "blue") : null;
         if (towerHit && towerHit.pvpTarget) damagePvpTarget(towerHit.pvpTarget, 44);
         const pvpRifleHitsEnemyTower = !!redTower && towerHit && towerHit.pvpTarget === redTower && redTower.hp < redTowerHpBefore;
         const redMinion = pvpMinions.find((minion) => minion.team === "red");
-        const redMinionHpBefore = redMinion ? redMinion.hp : 0;
+        const redMinionHpTotalBefore = pvpMinions.filter((minion) => minion.team === "red").reduce((sum, minion) => sum + (minion.hp || 0), 0);
         const minionHit = redMinion ? raycastShot(redMinion.x - 60, redMinion.y, 1, 0, 160, "blue") : null;
         if (minionHit && minionHit.pvpTarget) damagePvpTarget(minionHit.pvpTarget, 44);
-        const pvpRifleHitsEnemyMinion = !!redMinion && minionHit && minionHit.pvpTarget === redMinion && redMinion.hp < redMinionHpBefore;
+        const redMinionHpTotalAfter = pvpMinions.filter((minion) => minion.team === "red").reduce((sum, minion) => sum + (minion.hp || 0), 0);
+        const pvpRifleHitsEnemyMinion = !!redMinion && minionHit && !!minionHit.pvpTarget && redMinionHpTotalAfter < redMinionHpTotalBefore;
         player.x = 500;
         player.y = 500;
         player.hp = 100;
@@ -10360,6 +10403,10 @@
           pvpMinionsAdvance,
           pvpWorldSyncs,
           pvpMapSerializesMode,
+          pvpLaneDoors,
+          pvpNonLaneSpacesBlocked,
+          pvpClosedSideDoorBlocks,
+          pvpOpenSideDoorPasses,
           pvpRifleHitsEnemyTower,
           pvpRifleHitsEnemyMinion,
           pvpGuestRifleHitsHost,
