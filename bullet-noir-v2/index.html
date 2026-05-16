@@ -44,7 +44,7 @@
 
     html.app-fullscreen-root {
       width: 100%;
-      min-height: calc(100dvh + 320px);
+      min-height: calc(100dvh + 1200px);
       overflow: auto;
       overscroll-behavior: none;
       background: #000;
@@ -59,7 +59,7 @@
       background: #000;
       min-height: 100vh;
       min-height: 100dvh;
-      min-height: calc(100dvh + 320px);
+      min-height: calc(100dvh + 1200px);
       touch-action: none;
     }
 
@@ -105,8 +105,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "SINGLE VERSION";
-    const BUILD_VERSION = "2.0.17";
-    const BUILD_TIMESTAMP = "2026-05-17 01:48:00 KST";
+    const BUILD_VERSION = "2.0.18";
+    const BUILD_TIMESTAMP = "2026-05-17 02:05:00 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -5520,10 +5520,6 @@
           showGameToast("FULLSCREEN OFF");
           return;
         }
-        if (isIOSBrowserWithoutStandalone()) {
-          showGameToast("IOS BROWSER BLOCKS FULLSCREEN - ADD TO HOME SCREEN", false);
-          return;
-        }
         if (el.requestFullscreen) {
           await el.requestFullscreen({ navigationUI: "hide" });
           virtualFullscreen = true;
@@ -5539,16 +5535,8 @@
           return;
         }
       } catch (err) {
-        if (isIOSBrowserWithoutStandalone()) {
-          showGameToast("IOS BROWSER BLOCKS FULLSCREEN - ADD TO HOME SCREEN", false);
-          return;
-        }
         enterGameFullscreen();
         showGameToast("FULLSCREEN ON");
-        return;
-      }
-      if (isIOSBrowserWithoutStandalone()) {
-        showGameToast("IOS BROWSER BLOCKS FULLSCREEN - ADD TO HOME SCREEN", false);
         return;
       }
       enterGameFullscreen();
@@ -5557,16 +5545,6 @@
 
     function isAppFullscreenActive() {
       return !!(document.fullscreenElement || document.webkitFullscreenElement || document.body.classList.contains("app-fullscreen"));
-    }
-
-    function isStandaloneDisplay() {
-      return !!(navigator.standalone || matchMedia("(display-mode: fullscreen)").matches || matchMedia("(display-mode: standalone)").matches);
-    }
-
-    function isIOSBrowserWithoutStandalone() {
-      const ua = navigator.userAgent || "";
-      const iOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-      return iOS && !isStandaloneDisplay();
     }
 
     function enterGameFullscreen() {
@@ -5592,16 +5570,21 @@
       document.documentElement.classList.add("app-fullscreen-root");
       document.body.classList.add("app-fullscreen");
       syncFullscreenViewport();
+      window.scrollTo(0, 0);
+      requestAnimationFrame(() => {
+        window.scrollTo(0, 720);
+        syncFullscreenViewport();
+      });
       setTimeout(() => {
-        window.scrollTo(0, 140);
+        window.scrollTo(0, 720);
         resize();
       }, 50);
       setTimeout(() => {
-        window.scrollTo(0, 260);
+        window.scrollTo(0, 900);
         resize();
       }, 180);
       setTimeout(() => {
-        window.scrollTo(0, 320);
+        window.scrollTo(0, 1100);
         resize();
       }, 350);
     }
