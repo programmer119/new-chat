@@ -41,14 +41,24 @@
       touch-action: none;
     }
 
+    html.app-fullscreen-root {
+      width: 100%;
+      min-height: calc(100dvh + 320px);
+      overflow: auto;
+      overscroll-behavior: none;
+      background: #000;
+    }
+
     body.app-fullscreen {
-      position: fixed;
+      position: static;
       inset: 0;
       display: block;
-      overflow: hidden;
+      width: 100%;
+      overflow: auto;
       background: #000;
       min-height: 100vh;
       min-height: 100dvh;
+      min-height: calc(100dvh + 320px);
       touch-action: none;
     }
 
@@ -94,8 +104,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "SINGLE VERSION";
-    const BUILD_VERSION = "2.0.15";
-    const BUILD_TIMESTAMP = "2026-05-17 00:18:00 KST";
+    const BUILD_VERSION = "2.0.16";
+    const BUILD_TIMESTAMP = "2026-05-17 01:32:00 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -4828,7 +4838,7 @@
       drawInstalledLights(lightCtx);
       drawKillLights(lightCtx);
       drawBlastLights(lightCtx);
-      drawSoftConeLight(lightCtx, px, py, player.angle, 450 * z, PLAYER_VIEW_ANGLE * 0.5, mainEnergy * 0.92);
+      drawOccludedConeLight(lightCtx, player.x, player.y, player.angle, 450, PLAYER_VIEW_ANGLE * 0.5, mainEnergy * 0.92);
       for (const flash of flashes) {
         const alpha = Math.max(0, flash.life / flash.maxLife);
         drawLightTexture(lightCtx, assets.shotLight, screenX(flash.x), screenY(flash.y), flash.angle + Math.PI / 2, 430 * z, 430 * z, alpha * 0.9);
@@ -4897,6 +4907,25 @@
       target.clip();
       drawRadialLight(target, screenX(x), screenY(y), 10 * camera.zoom, radius * camera.zoom, energy);
       drawRadialLight(target, screenX(x), screenY(y), 3 * camera.zoom, radius * 0.38 * camera.zoom, energy * 1.1);
+      target.restore();
+    }
+
+    function drawOccludedConeLight(target, worldX, worldY, angle, length, halfAngle, energy) {
+      const z = camera.zoom;
+      const rayCount = 46;
+      const originX = screenX(worldX);
+      const originY = screenY(worldY);
+      target.save();
+      target.beginPath();
+      target.moveTo(originX, originY);
+      for (let i = 0; i <= rayCount; i++) {
+        const a = angle - halfAngle + (halfAngle * 2 * i) / rayCount;
+        const d = rayBlockDistance(worldX, worldY, Math.cos(a), Math.sin(a), length);
+        target.lineTo(screenX(worldX + Math.cos(a) * d), screenY(worldY + Math.sin(a) * d));
+      }
+      target.closePath();
+      target.clip();
+      drawSoftConeLight(target, originX, originY, angle, length * z, halfAngle, energy);
       target.restore();
     }
 
@@ -5524,6 +5553,7 @@
 
     function exitGameFullscreen() {
       virtualFullscreen = false;
+      document.documentElement.classList.remove("app-fullscreen-root");
       document.body.classList.remove("app-fullscreen");
       canvas.style.position = "";
       canvas.style.left = "";
@@ -5536,14 +5566,19 @@
 
     function hideBrowserChrome() {
       virtualFullscreen = true;
+      document.documentElement.classList.add("app-fullscreen-root");
       document.body.classList.add("app-fullscreen");
       syncFullscreenViewport();
       setTimeout(() => {
-        window.scrollTo(0, 1);
+        window.scrollTo(0, 140);
         resize();
       }, 50);
       setTimeout(() => {
-        window.scrollTo(0, 1);
+        window.scrollTo(0, 260);
+        resize();
+      }, 180);
+      setTimeout(() => {
+        window.scrollTo(0, 320);
         resize();
       }, 350);
     }
