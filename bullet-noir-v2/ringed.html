@@ -5,7 +5,7 @@
   <meta http-equiv="Cache-Control" content="no-store, max-age=0">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, minimal-ui">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="SANG SUB">
@@ -105,8 +105,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "SINGLE VERSION";
-    const BUILD_VERSION = "2.0.18";
-    const BUILD_TIMESTAMP = "2026-05-17 02:05:00 KST";
+    const BUILD_VERSION = "2.0.19";
+    const BUILD_TIMESTAMP = "2026-05-17 02:24:00 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -200,6 +200,7 @@
       weaponDragX: 0,
       weaponReady: false
     };
+    let fullscreenScrollUnlockUntil = 0;
     let audioReady = false;
     let audioCtx = null;
     let audioMasterGain = null;
@@ -5567,6 +5568,7 @@
 
     function hideBrowserChrome() {
       virtualFullscreen = true;
+      fullscreenScrollUnlockUntil = performance.now() + 1400;
       document.documentElement.classList.add("app-fullscreen-root");
       document.body.classList.add("app-fullscreen");
       syncFullscreenViewport();
@@ -5747,10 +5749,14 @@
 
     function handleTouchStart(event) {
       if (!isMobile) return;
-      event.preventDefault();
       ensureAudio();
       startVoiceCommands();
       updateTouchPositions(event);
+      for (const touch of event.changedTouches) {
+        const p = touchPoint(touch);
+        if (state === "play" && handleFullscreenButtonClick(p.x, p.y)) return;
+      }
+      event.preventDefault();
       for (const touch of event.changedTouches) {
         const p = touchPoint(touch);
         if (state === "intro") {
@@ -5773,7 +5779,6 @@
       if (state !== "play") continue;
       if (handleGameMenuButtonClick(p.x, p.y)) return;
       if (handleSpecialForcesToggleClick(p.x, p.y)) return;
-      if (handleFullscreenButtonClick(p.x, p.y)) return;
       if (handleCameraButtonClick(p.x, p.y)) return;
       const action = mobileActionAt(p.x, p.y);
         if (action === "weapon") {
@@ -5797,6 +5802,10 @@
 
     function handleTouchMove(event) {
       if (!isMobile) return;
+      if (document.body.classList.contains("app-fullscreen") && performance.now() < fullscreenScrollUnlockUntil) {
+        syncFullscreenViewport();
+        return;
+      }
       event.preventDefault();
       if (state === "maptool") {
         for (const touch of event.changedTouches) handleMapToolTouchMove(touchPoint(touch));
