@@ -1,0 +1,10 @@
+{
+  "name": "SANG SUB",
+  "short_name": "SANG SUB",
+  "start_url": "./ringed.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#000000",
+  "theme_color": "#000000"
+}
