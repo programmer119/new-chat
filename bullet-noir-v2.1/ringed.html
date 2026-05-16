@@ -87,8 +87,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.57";
-    const BUILD_TIMESTAMP = "2026-05-16 20:52:00 KST";
+    const BUILD_VERSION = "2.1.58";
+    const BUILD_TIMESTAMP = "2026-05-17 00:00:00 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -226,6 +226,9 @@
       aimStartY: 0,
       aimTouchX: 0,
       aimTouchY: 0,
+      aimDirX: 1,
+      aimDirY: 0,
+      aimSource: "idle",
       shoot: false,
       dodge: false,
       weaponTouchId: null,
@@ -9267,6 +9270,9 @@
         mobileControls.aimStartY = 0;
         mobileControls.aimTouchX = 0;
         mobileControls.aimTouchY = 0;
+        if (Math.hypot(mobileControls.moveX, mobileControls.moveY) > 0.08) {
+          setMobileAimDirection(mobileControls.moveX, mobileControls.moveY, "move");
+        }
       }
     }
 
@@ -9329,6 +9335,25 @@
       mobileControls.moveY = (dy / d) * amount;
       mobileControls.knobX = (dx / d) * Math.min(limit, d);
       mobileControls.knobY = (dy / d) * Math.min(limit, d);
+      if (!mobileControls.shoot && amount > 0.08) {
+        setMobileAimDirection(dx / d, dy / d, "move");
+      }
+    }
+
+    function setMobileAimDirection(dirX, dirY, source) {
+      const d = Math.hypot(dirX, dirY);
+      if (d < 0.001) return;
+      const nx = dirX / d;
+      const ny = dirY / d;
+      mobileControls.aimDirX = nx;
+      mobileControls.aimDirY = ny;
+      mobileControls.aimSource = source;
+      const distance = Math.min(width, height) * 0.36;
+      const px = screenX(player.x);
+      const py = screenY(player.y);
+      mobileControls.aimScreenX = clamp(px + nx * distance, 18, width - 18);
+      mobileControls.aimScreenY = clamp(py + ny * distance, 18, height - 18);
+      syncMobileAimWorld();
     }
 
     function updateMobileAttackStick(x, y, force) {
@@ -9375,12 +9400,7 @@
       dirY /= dirD;
       mobileControls.aimDirX = dirX;
       mobileControls.aimDirY = dirY;
-      const distance = Math.min(width, height) * 0.36;
-      const px = screenX(player.x);
-      const py = screenY(player.y);
-      mobileControls.aimScreenX = clamp(px + dirX * distance, 18, width - 18);
-      mobileControls.aimScreenY = clamp(py + dirY * distance, 18, height - 18);
-      syncMobileAimWorld();
+      setMobileAimDirection(dirX, dirY, "attack");
       mobileControls.aimTouchX = x;
       mobileControls.aimTouchY = y;
     }
@@ -10226,12 +10246,22 @@
         const mobileAimJoystickRetargetsInstantly =
           mobileControls.aimDirY > 0.92 &&
           mobileControls.aimScreenY > topAimY + 10;
-        const draggedAimX = mobileControls.aimScreenX;
-        const draggedAimY = mobileControls.aimScreenY;
+        mobileControls.shoot = false;
+        setMobileAimDirection(0, 1, "test");
+        const moveStickForAim = mobileButtonRects().stick;
+        const moveAimBefore = Math.atan2(mobileControls.aimY - player.y, mobileControls.aimX - player.x);
+        updateMobileStick(moveStickForAim.x + moveStickForAim.r * 0.6, moveStickForAim.y);
+        const moveAimAfter = Math.atan2(mobileControls.aimY - player.y, mobileControls.aimX - player.x);
+        const mobileMoveStickTurnsGun =
+          mobileControls.aimSource === "move" &&
+          mobileControls.aimDirX > 0.9 &&
+          Math.abs(moveAimAfter - moveAimBefore) > 0.2;
+        mobileControls.shoot = true;
+        setMobileAimDirection(0, 1, "attack");
         updateMobileStick(180, height - 150);
-        const mobileMoveStickDoesNotMoveCursor =
-          Math.abs(mobileControls.aimScreenX - draggedAimX) < 0.01 &&
-          Math.abs(mobileControls.aimScreenY - draggedAimY) < 0.01;
+        const mobileAttackStickKeepsPriority =
+          mobileControls.aimSource === "attack";
+        mobileControls.shoot = false;
         camera.x = 40;
         camera.y = 60;
         player.x = 620;
@@ -10634,7 +10664,8 @@
           mobileAimCursorActsLikeMouse,
           mobileAimUnaffectedByMoveStick,
           mobileAimJoystickRetargetsInstantly,
-          mobileMoveStickDoesNotMoveCursor,
+          mobileMoveStickTurnsGun,
+          mobileAttackStickKeepsPriority,
           mobileAimRetargetsAfterCameraMove,
           synthSfxFallbackAvailable,
           logoSoundUsesWebAudio,
@@ -10837,7 +10868,7 @@
           role: coop.role,
           connected: coop.connected,
           remote: coop.remote ? { x: coop.remote.x, y: coop.remote.y, hp: coop.remote.hp, weapon: coop.remote.weapon } : null,
-          player: { x: player.x, y: player.y, hp: player.hp, weapon: selectedWeapon, rifleAmmo, bombCount, flameAmmo, iceAmmo, barricadeCount },
+          player: { x: player.x, y: player.y, angle: player.angle, hp: player.hp, weapon: selectedWeapon, rifleAmmo, bombCount, flameAmmo, iceAmmo, barricadeCount },
           counts: {
             enemies: enemies.length,
             props: props.length,
