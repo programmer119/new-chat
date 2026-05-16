@@ -107,8 +107,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.64";
-    const BUILD_TIMESTAMP = "2026-05-17 02:43:00 KST";
+    const BUILD_VERSION = "2.1.65";
+    const BUILD_TIMESTAMP = "2026-05-17 02:52:00 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -9028,10 +9028,6 @@
           showGameToast("FULLSCREEN OFF");
           return;
         }
-        if (await tryIOSNativeVideoFullscreen()) {
-          showGameToast("IOS NATIVE FULLSCREEN");
-          return;
-        }
         if (el.requestFullscreen) {
           await el.requestFullscreen({ navigationUI: "hide" });
           virtualFullscreen = true;
@@ -9053,42 +9049,6 @@
       }
       enterGameFullscreen();
       showGameToast("FULLSCREEN ON");
-    }
-
-    async function tryIOSNativeVideoFullscreen() {
-      const ua = navigator.userAgent || "";
-      const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-      if (!isIOS || typeof canvas.captureStream !== "function") return false;
-      let video = document.getElementById("ios-fullscreen-video");
-      if (!video) {
-        video = document.createElement("video");
-        video.id = "ios-fullscreen-video";
-        video.muted = true;
-        video.autoplay = true;
-        video.controls = false;
-        video.setAttribute("preload", "auto");
-        video.style.cssText = "position:fixed;left:-1px;top:-1px;width:1px;height:1px;opacity:0;pointer-events:none;z-index:-1";
-        document.body.appendChild(video);
-      }
-      try {
-        if (!video.srcObject) video.srcObject = canvas.captureStream(30);
-        await video.play();
-        if (video.webkitEnterFullscreen) {
-          video.webkitEnterFullscreen();
-          return true;
-        }
-        if (video.webkitEnterFullScreen) {
-          video.webkitEnterFullScreen();
-          return true;
-        }
-        if (video.requestFullscreen) {
-          await video.requestFullscreen();
-          return true;
-        }
-      } catch (err) {
-        return false;
-      }
-      return false;
     }
 
     function isAppFullscreenActive() {
