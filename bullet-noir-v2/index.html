@@ -36,6 +36,21 @@
       touch-action: none;
     }
 
+    body.app-fullscreen {
+      overflow: hidden;
+      background: #000;
+    }
+
+    body.app-fullscreen canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw !important;
+      height: 100vh !important;
+      height: 100dvh !important;
+      max-width: none;
+      z-index: 9999;
+    }
+
     @media (orientation: landscape) and (max-height: 620px) {
       canvas {
         width: 100vw;
@@ -64,8 +79,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "SINGLE VERSION";
-    const BUILD_VERSION = "2.0.10";
-    const BUILD_TIMESTAMP = "2026-05-16 19:30:06 KST";
+    const BUILD_VERSION = "2.0.11";
+    const BUILD_TIMESTAMP = "2026-05-16 20:26:00 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -116,6 +131,7 @@
     let gameOverTimer = 0;
     let aimRay = null;
     let cameraMode = 2;
+    let virtualFullscreen = false;
     let usingCustomMap = false;
     let idleRaidTimer = 0;
     let idleRaidCooldown = 0;
@@ -4779,27 +4795,8 @@
       const z = camera.zoom;
       const px = screenX(player.x);
       const py = screenY(player.y);
-      const forward = { x: Math.cos(player.angle), y: Math.sin(player.angle) };
-      const side = { x: -Math.sin(player.angle), y: Math.cos(player.angle) };
-
-      // Ringed's original player scene places the main Light2D at (4.42135, -167.677)
-      // with flashlight.png at scale 0.387037 and energy 1.3. Since this Canvas
-      // build faces +X instead of Godot's -Y, the local offset is remapped to
-      // forward/side coordinates while preserving the original numbers.
-      const flickerT = (performance.now() % 300) / 300;
-      const flickerPhase = flickerT < 0.666 ? flickerT / 0.666 : (1 - flickerT) / 0.334;
-      const originalScalePulse = 1 - 0.1 * flickerPhase;
-      const originalPosPulse = {
-        x: 5.29622 + (4.38928 - 5.29622) * flickerPhase,
-        y: 0.776039 + (-5.71774 - 0.776039) * flickerPhase
-      };
       const healthEnergy = player.hp / 100;
       const mainEnergy = 0.98 * healthEnergy;
-      const fillEnergy = 0.38 * healthEnergy;
-      const beamCenter = {
-        x: px + (forward.x * 167.677 + side.x * 4.42135 + side.x * originalPosPulse.x + forward.x * -originalPosPulse.y) * z,
-        y: py + (forward.y * 167.677 + side.y * 4.42135 + side.y * originalPosPulse.x + forward.y * -originalPosPulse.y) * z
-      };
 
       lightCtx.setTransform(scale, 0, 0, scale, 0, 0);
       lightCtx.clearRect(0, 0, width, height);
@@ -4811,10 +4808,7 @@
       drawInstalledLights(lightCtx);
       drawKillLights(lightCtx);
       drawBlastLights(lightCtx);
-      drawRadialLight(lightCtx, px, py, 20 * z, 250 * z, fillEnergy * 1.55);
       drawSoftConeLight(lightCtx, px, py, player.angle, 450 * z, PLAYER_VIEW_ANGLE * 0.5, mainEnergy * 0.92);
-      drawSoftConeLight(lightCtx, px + forward.x * 52 * z, py + forward.y * 52 * z, player.angle, 315 * z, PLAYER_VIEW_ANGLE * 0.32, mainEnergy * 0.42);
-      drawLightTexture(lightCtx, assets.flashlight, beamCenter.x, beamCenter.y, player.angle + Math.PI / 2, 1024 * 0.2 * originalScalePulse * z, 1024 * 0.2 * originalScalePulse * z, mainEnergy * 0.07);
       for (const flash of flashes) {
         const alpha = Math.max(0, flash.life / flash.maxLife);
         drawLightTexture(lightCtx, assets.shotLight, screenX(flash.x), screenY(flash.y), flash.angle + Math.PI / 2, 430 * z, 430 * z, alpha * 0.9);
@@ -4833,7 +4827,6 @@
       ctx.translate(-camera.x, -camera.y);
       drawFacility();
       ctx.restore();
-      drawVisibleFlashlightGlow(px, py, beamCenter.x, beamCenter.y, player.angle, mainEnergy);
     }
 
     function drawInstalledLights(target) {
@@ -5012,7 +5005,7 @@
     function drawSoftConeLight(target, x, y, angle, length, halfAngle, energy) {
       for (let i = 0; i < 7; i++) {
         const t = i / 6;
-        const spread = halfAngle * (0.35 + t * 0.95);
+        const spread = halfAngle * (0.28 + t * 0.72);
         const alpha = energy * (0.34 - t * 0.036);
         const len = length * (0.82 + t * 0.2);
         const end = { x: x + Math.cos(angle) * len, y: y + Math.sin(angle) * len };
@@ -5465,15 +5458,73 @@
       return true;
     }
 
-    function toggleFullscreen() {
+    async function toggleFullscreen() {
       const doc = document;
       const el = document.documentElement;
       const active = doc.fullscreenElement || doc.webkitFullscreenElement;
-      if (active) {
-        if (doc.exitFullscreen) doc.exitFullscreen();
-        else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen();
-      } else if (el.requestFullscreen) el.requestFullscreen();
-      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      try {
+        if (active) {
+          if (doc.exitFullscreen) await doc.exitFullscreen();
+          else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen();
+          showGameToast("FULLSCREEN OFF");
+          return;
+        }
+        if (el.requestFullscreen) {
+          await el.requestFullscreen({ navigationUI: "hide" });
+          showGameToast("FULLSCREEN ON");
+          return;
+        }
+        if (el.webkitRequestFullscreen) {
+          el.webkitRequestFullscreen();
+          showGameToast("FULLSCREEN ON");
+          return;
+        }
+      } catch (err) {
+        virtualFullscreen = !virtualFullscreen;
+        document.body.classList.toggle("app-fullscreen", virtualFullscreen);
+        resize();
+        showGameToast(virtualFullscreen ? "FULLSCREEN ON" : "FULLSCREEN OFF");
+        return;
+      }
+      virtualFullscreen = !virtualFullscreen;
+      document.body.classList.toggle("app-fullscreen", virtualFullscreen);
+      resize();
+      showGameToast(virtualFullscreen ? "FULLSCREEN ON" : "FULLSCREEN OFF");
+    }
+
+    function showGameToast(text, ok = true) {
+      let toast = document.getElementById("game-toast");
+      if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "game-toast";
+        toast.style.cssText = [
+          "position:fixed",
+          "left:50%",
+          "bottom:calc(96px + env(safe-area-inset-bottom, 0px))",
+          "transform:translateX(-50%) translateY(8px)",
+          "z-index:10050",
+          "max-width:calc(100vw - 32px)",
+          "padding:10px 14px",
+          "border-radius:10px",
+          "font:900 13px Arial,sans-serif",
+          "letter-spacing:.4px",
+          "pointer-events:none",
+          "opacity:0",
+          "transition:opacity .18s ease, transform .18s ease"
+        ].join(";");
+        document.body.appendChild(toast);
+      }
+      toast.textContent = text;
+      toast.style.background = ok ? "rgba(24, 55, 82, .92)" : "rgba(90, 32, 28, .92)";
+      toast.style.color = ok ? "#d9f2ff" : "#ffe2d8";
+      toast.style.border = ok ? "1px solid rgba(120,190,255,.75)" : "1px solid rgba(255,150,130,.75)";
+      toast.style.opacity = "1";
+      toast.style.transform = "translateX(-50%) translateY(0)";
+      clearTimeout(toast._timer);
+      toast._timer = setTimeout(() => {
+        toast.style.opacity = "0";
+        toast.style.transform = "translateX(-50%) translateY(8px)";
+      }, 1500);
     }
 
     function handleCameraButtonClick(x, y) {
