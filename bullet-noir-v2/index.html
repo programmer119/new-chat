@@ -64,8 +64,14 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "SINGLE VERSION";
-    const BUILD_VERSION = "2.0.9";
-    const BUILD_TIMESTAMP = "2026-05-13 13:16:43 KST";
+    const BUILD_VERSION = "2.0.10";
+    const BUILD_TIMESTAMP = "2026-05-16 19:30:06 KST";
+    const PLAYER_SPEED_SCALE = 0.8;
+    const ENEMY_SPEED_SCALE = 0.8;
+    const CAMERA_ZOOM_SCALE = 0.9;
+    const WEAPON_RANGE_SCALE = 1.3;
+    const BOMB_RANGE_SCALE = 1.15;
+    const PLAYER_VIEW_ANGLE = Math.PI * 140 / 180;
 
     const assetList = {
       player: "gfx/player.png",
@@ -299,6 +305,7 @@
       }
       if (state === "play" && handleGameMenuButtonClick(mouse.x, mouse.y)) return;
       if (state === "play" && handleSpecialForcesToggleClick(mouse.x, mouse.y)) return;
+      if (handleFullscreenButtonClick(mouse.x, mouse.y)) return;
       if (handleCameraButtonClick(mouse.x, mouse.y)) return;
       if (event.button === 2) mouse.right = true;
       else mouse.down = true;
@@ -1411,9 +1418,11 @@
     }
 
     function enemySpeed(kind, fast) {
-      if (kind === "melee") return fast ? 178 + wave * 5 : 126 + wave * 4;
-      if (kind === "flamer") return fast ? 116 + wave * 3 : 78 + wave * 2;
-      return fast ? 128 + wave * 3 : 72 + wave * 2;
+      let speed;
+      if (kind === "melee") speed = fast ? 178 + wave * 5 : 126 + wave * 4;
+      else if (kind === "flamer") speed = fast ? 116 + wave * 3 : 78 + wave * 2;
+      else speed = fast ? 128 + wave * 3 : 72 + wave * 2;
+      return speed * ENEMY_SPEED_SCALE;
     }
 
     function spawnEnemy() {
@@ -1557,7 +1566,7 @@
     function weaponCooldownProgress(weapon = selectedWeapon) {
       if (weapon === "rifle" && rifleReload > 0) return clamp(1 - rifleReload / 3, 0, 1);
       if (weapon === "bomb" && bombCooldown > 0) return clamp(1 - bombCooldown / 0.72, 0, 1);
-      if (weapon === "flamer" && shootCooldown > 0) return clamp(1 - shootCooldown / 0.08, 0, 1);
+      if (weapon === "flamer" && shootCooldown > 0) return clamp(1 - shootCooldown / 0.52, 0, 1);
       if (weapon === "ice" && shootCooldown > 0) return clamp(1 - shootCooldown / 0.52, 0, 1);
       return 0;
     }
@@ -1789,7 +1798,7 @@
         selectedWeapon = "rifle";
         return;
       }
-      shootCooldown = 0.08;
+      shootCooldown = 0.52;
       flameAmmo--;
       if (flameAmmo <= 0) selectedWeapon = "rifle";
       playSfx("flamer", 1.25);
@@ -1797,15 +1806,15 @@
       const dy = Math.sin(player.angle);
       const sx = player.x + dx * 38;
       const sy = player.y + dy * 38;
-      const reach = rayBlockDistance(sx, sy, dx, dy, 245);
+      const reach = rayBlockDistance(sx, sy, dx, dy, 245 * WEAPON_RANGE_SCALE);
       flameBursts.push({
         x: sx,
         y: sy,
         angle: player.angle,
-        life: 0.16,
-        maxLife: 0.16,
+        life: 0.18,
+        maxLife: 0.18,
         length: reach,
-        spread: 0.34,
+        spread: 0.34 * WEAPON_RANGE_SCALE,
         hostile: false
       });
       for (const enemy of enemies) {
@@ -1813,12 +1822,12 @@
         const ey = enemy.y - sy;
         const forward = ex * dx + ey * dy;
         const side = Math.abs(ex * dy - ey * dx);
-        if (forward > 0 && forward < reach && side < 36 + forward * 0.16 && hasLineOfSight(sx, sy, enemy.x, enemy.y, Math.hypot(ex, ey))) {
+        if (forward > 0 && forward < reach && side < 36 * WEAPON_RANGE_SCALE + forward * 0.16 * WEAPON_RANGE_SCALE && hasLineOfSight(sx, sy, enemy.x, enemy.y, Math.hypot(ex, ey))) {
           enemy.hp -= 17;
           burst(enemy.x, enemy.y, "#e46a32", 3);
         }
       }
-      damagePropsInCone(sx, sy, dx, dy, reach, 32, 0.16, 1);
+      damagePropsInCone(sx, sy, dx, dy, reach, 32 * WEAPON_RANGE_SCALE, 0.16 * WEAPON_RANGE_SCALE, 1);
       shake = Math.max(shake, 2.5);
     }
 
@@ -1837,7 +1846,7 @@
       const dy = Math.sin(player.angle);
       const sx = player.x + dx * 36;
       const sy = player.y + dy * 36;
-      const maxRange = 42 * 5;
+      const maxRange = 42 * 5 * WEAPON_RANGE_SCALE;
       const reach = rayBlockDistance(sx, sy, dx, dy, maxRange);
       iceStorms.push({
         x: sx,
@@ -1854,14 +1863,14 @@
         const ey = enemy.y - sy;
         const forward = ex * dx + ey * dy;
         const side = Math.abs(ex * dy - ey * dx);
-        const cone = 18 + Math.max(0, forward) * 0.42;
+        const cone = 18 * WEAPON_RANGE_SCALE + Math.max(0, forward) * 0.42 * WEAPON_RANGE_SCALE;
         if (forward > 0 && forward < reach && side < cone && hasLineOfSight(sx, sy, enemy.x, enemy.y, Math.hypot(ex, ey))) {
           enemy.freeze = 5;
           enemy.freezeMax = 5;
           burst(enemy.x, enemy.y, "#bfefff", 12);
         }
       }
-      damagePropsInCone(sx, sy, dx, dy, reach, 18, 0.42, 2);
+      damagePropsInCone(sx, sy, dx, dy, reach, 18 * WEAPON_RANGE_SCALE, 0.42 * WEAPON_RANGE_SCALE, 2);
       shake = Math.max(shake, 5);
     }
 
@@ -1873,7 +1882,7 @@
       const dx = target.x - player.x;
       const dy = target.y - player.y;
       const d = Math.hypot(dx, dy) || 1;
-      const range = 140;
+      const range = 140 * BOMB_RANGE_SCALE;
       const tx = clamp(player.x + dx / d * range, 70, world.w - 70);
       const ty = clamp(player.y + dy / d * range, 70, world.h - 70);
       bombs.push({
@@ -2003,6 +2012,22 @@
       return true;
     }
 
+    function angleDistance(a, b) {
+      let d = a - b;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      return Math.abs(d);
+    }
+
+    function isVisibleInPlayerCone(x, y, radius = 0) {
+      const dx = x - player.x;
+      const dy = y - player.y;
+      const d = Math.hypot(dx, dy);
+      if (d < Math.max(34, radius + 18)) return true;
+      if (angleDistance(Math.atan2(dy, dx), player.angle) > PLAYER_VIEW_ANGLE * 0.5) return false;
+      return hasLineOfSight(player.x, player.y, x, y, d);
+    }
+
     function explosionBlockers(options = {}) {
       const blockers = walls.slice();
       for (const door of doors) {
@@ -2109,7 +2134,7 @@
           collisionR: spec.leader ? 20 : 18,
           hp: maxHp,
           maxHp,
-          speed: spec.leader ? 82 + wave * 2 : enemySpeed(spec.kind, fast) + 16,
+          speed: spec.leader ? (82 + wave * 2) * ENEMY_SPEED_SCALE : enemySpeed(spec.kind, fast) + 16 * ENEMY_SPEED_SCALE,
           bite: 0,
           shoot: 0.35 + i * 0.15,
           kind: spec.kind,
@@ -2226,7 +2251,7 @@
       my /= mag;
 
       const sprint = keys.has("ShiftLeft") || keys.has("ShiftRight");
-      let speed = sprint && player.stamina > 0 ? 285 : 190;
+      let speed = (sprint && player.stamina > 0 ? 285 : 190) * PLAYER_SPEED_SCALE;
       if (sprint && (mx || my)) player.stamina = Math.max(0, player.stamina - dt * 35);
       else player.stamina = Math.min(100, player.stamina + dt * 22);
       const wantsDash = keys.has("Space") || (isMobile && mobileControls.dodge);
@@ -2238,7 +2263,7 @@
         if (dashCharges <= 0) dashRecharge = 5;
       }
       if (isMobile && mobileControls.dodge) mobileControls.dodge = false;
-      if (player.dodge > 0) speed = 520;
+      if (player.dodge > 0) speed = 520 * PLAYER_SPEED_SCALE;
 
       const beforePlayerX = player.x;
       const beforePlayerY = player.y;
@@ -2258,7 +2283,7 @@
         player.angle = Math.atan2(aimTarget.y - player.y, aimTarget.x - player.x);
       }
       updateAimRay(aimTarget);
-      if (mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice")) fire();
+      if (mouse.down || (isMobile && mobileControls.shoot && selectedWeapon !== "ice" && selectedWeapon !== "flamer")) fire();
       if (mouse.right || keys.has("KeyQ")) throwBomb(aimTarget);
 
       for (let i = bullets.length - 1; i >= 0; i--) {
@@ -2867,7 +2892,7 @@
 
     function updateCamera(dt, worldMouse) {
       let target = { x: player.x, y: player.y };
-      camera.zoom = cameraMode === 2 ? 0.9 : 1;
+      camera.zoom = (cameraMode === 2 ? 0.9 : 1) * CAMERA_ZOOM_SCALE;
       if (cameraMode === 2) {
         target = smartCameraTarget(worldMouse);
       }
@@ -3649,7 +3674,7 @@
       drawEnemyTracers();
       drawFlameBursts();
       drawIceStorms();
-      for (const e of enemies) drawEnemy(e);
+      for (const e of enemies) if (isVisibleInPlayerCone(e.x, e.y, e.r)) drawEnemy(e);
       drawSpeechBubbles();
       drawPlayer();
       drawDashBursts();
@@ -4787,8 +4812,8 @@
       drawKillLights(lightCtx);
       drawBlastLights(lightCtx);
       drawRadialLight(lightCtx, px, py, 20 * z, 250 * z, fillEnergy * 1.55);
-      drawSoftConeLight(lightCtx, px, py, player.angle, 450 * z, 0.62, mainEnergy * 0.92);
-      drawSoftConeLight(lightCtx, px + forward.x * 52 * z, py + forward.y * 52 * z, player.angle, 315 * z, 0.36, mainEnergy * 0.42);
+      drawSoftConeLight(lightCtx, px, py, player.angle, 450 * z, PLAYER_VIEW_ANGLE * 0.5, mainEnergy * 0.92);
+      drawSoftConeLight(lightCtx, px + forward.x * 52 * z, py + forward.y * 52 * z, player.angle, 315 * z, PLAYER_VIEW_ANGLE * 0.32, mainEnergy * 0.42);
       drawLightTexture(lightCtx, assets.flashlight, beamCenter.x, beamCenter.y, player.angle + Math.PI / 2, 1024 * 0.2 * originalScalePulse * z, 1024 * 0.2 * originalScalePulse * z, mainEnergy * 0.07);
       for (const flash of flashes) {
         const alpha = Math.max(0, flash.life / flash.maxLife);
@@ -5081,6 +5106,7 @@
       drawGameMenuButton();
       drawSpecialForcesToggle();
       drawCameraButtons();
+      drawMiniMap();
     }
 
     function gameMenuButtonRect() {
@@ -5203,27 +5229,19 @@
       ctx.save();
       const canSwitch = availableWeapons().length > 1;
       const next = nextWeapon();
-      const t = performance.now() * 0.006;
-      const slide = canSwitch ? (Math.sin(t) * 0.5 + 0.5) : 0;
-      const dragProgress = clamp(-(mobileControls.weaponDragX || 0) / 48, 0, 1);
-      const armed = canSwitch && mobileControls.weaponReady;
+      const tapPulse = canSwitch ? (Math.sin(performance.now() * 0.006) * 0.5 + 0.5) : 0;
       const nextW = 86;
       const nextH = 34;
       const nextX = Math.max(10, rect.x - nextW - 42);
       const nextY = rect.y + rect.h * 0.5 - nextH * 0.5;
       ctx.globalAlpha = canSwitch ? 0.94 : 0.48;
-      ctx.fillStyle = armed ? "rgba(236, 245, 255, 0.9)" : "rgba(10, 13, 17, 0.7)";
-      ctx.strokeStyle = armed ? "rgba(255, 236, 150, 0.96)" : "rgba(220, 232, 240, 0.36)";
-      ctx.lineWidth = armed ? 2.6 : 1.4;
+      ctx.fillStyle = "rgba(10, 13, 17, 0.7)";
+      ctx.strokeStyle = canSwitch ? "rgba(255, 236, 150, " + (0.42 + tapPulse * 0.4) + ")" : "rgba(220, 232, 240, 0.3)";
+      ctx.lineWidth = canSwitch ? 1.8 : 1.2;
       roundRect(nextX, nextY, nextW, nextH, 9);
       ctx.fill();
       ctx.stroke();
-      if (dragProgress > 0 && !armed) {
-        ctx.fillStyle = "rgba(255, 236, 150, " + (0.2 + dragProgress * 0.32) + ")";
-        roundRect(nextX + 3, nextY + 3, (nextW - 6) * dragProgress, nextH - 6, 7);
-        ctx.fill();
-      }
-      ctx.fillStyle = armed ? "#11161b" : "#dfe7ef";
+      ctx.fillStyle = "#dfe7ef";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.font = "900 10px Arial";
@@ -5231,30 +5249,17 @@
       ctx.font = "900 13px Arial";
       ctx.fillText(weaponNames[next], nextX + nextW / 2, nextY + 24);
 
-      const arrowY = rect.y + rect.h / 2;
-      const arrowStart = rect.x - 8;
-      const arrowEnd = nextX + nextW + 8;
-      const animX = arrowStart - slide * 24;
-      ctx.strokeStyle = armed ? "rgba(255, 236, 150, 0.98)" : (canSwitch ? "rgba(238, 246, 255, 0.86)" : "rgba(180,190,198,0.5)");
+      const tapX = rect.x + rect.w / 2;
+      const tapY = rect.y + rect.h + 11;
+      ctx.strokeStyle = canSwitch ? "rgba(238, 246, 255, " + (0.45 + tapPulse * 0.42) + ")" : "rgba(180,190,198,0.38)";
       ctx.lineWidth = 2;
       ctx.lineCap = "round";
       ctx.beginPath();
-      ctx.moveTo(arrowStart, arrowY);
-      ctx.lineTo(arrowEnd, arrowY);
-      ctx.moveTo(arrowEnd, arrowY);
-      ctx.lineTo(arrowEnd + 9, arrowY - 8);
-      ctx.moveTo(arrowEnd, arrowY);
-      ctx.lineTo(arrowEnd + 9, arrowY + 8);
+      ctx.arc(tapX, tapY, 8 + tapPulse * 4, 0, Math.PI * 2);
       ctx.stroke();
-      for (let i = 0; i < 2; i++) {
-        const x = animX - i * 14;
-        ctx.globalAlpha = armed ? 1 - i * 0.2 : (canSwitch ? 0.45 + slide * 0.45 - i * 0.15 : 0.28);
-        ctx.beginPath();
-        ctx.moveTo(x, arrowY - 8);
-        ctx.lineTo(x - 10, arrowY);
-        ctx.lineTo(x, arrowY + 8);
-        ctx.stroke();
-      }
+      ctx.fillStyle = canSwitch ? "#eaf3ff" : "rgba(210,220,228,0.5)";
+      ctx.font = "900 9px Arial";
+      ctx.fillText("TAP", tapX, tapY + 1);
 
       ctx.globalAlpha = 1;
       const active = selectedWeapon !== "rifle" || availableWeapons().length > 1;
@@ -5440,12 +5445,35 @@
     }
 
     function cameraButtonRects() {
-      const x = Math.min(width - 142, 292);
+      const x = Math.min(width - 184, 292);
       const y = 16;
       return [
         { mode: 1, x, y, w: 62, h: 34 },
         { mode: 2, x: x + 66, y, w: 62, h: 34 }
       ];
+    }
+
+    function fullscreenButtonRect() {
+      const cam = cameraButtonRects()[1];
+      return { x: cam.x + cam.w + 8, y: cam.y + 3, w: 30, h: 28 };
+    }
+
+    function handleFullscreenButtonClick(x, y) {
+      const rect = fullscreenButtonRect();
+      if (x < rect.x || x > rect.x + rect.w || y < rect.y || y > rect.y + rect.h) return false;
+      toggleFullscreen();
+      return true;
+    }
+
+    function toggleFullscreen() {
+      const doc = document;
+      const el = document.documentElement;
+      const active = doc.fullscreenElement || doc.webkitFullscreenElement;
+      if (active) {
+        if (doc.exitFullscreen) doc.exitFullscreen();
+        else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen();
+      } else if (el.requestFullscreen) el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
     }
 
     function handleCameraButtonClick(x, y) {
@@ -5475,6 +5503,69 @@
         ctx.fillStyle = active ? "#10151b" : "#d8dde5";
         ctx.fillText("CAM " + rect.mode, rect.x + rect.w / 2, rect.y + rect.h / 2 + 1);
       }
+      const fs = fullscreenButtonRect();
+      ctx.fillStyle = "rgba(0, 0, 0, 0.52)";
+      ctx.strokeStyle = "rgba(255,255,255,0.3)";
+      ctx.lineWidth = 1.5;
+      roundRect(fs.x, fs.y, fs.w, fs.h, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = "#d8dde5";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(fs.x + 9, fs.y + 11);
+      ctx.lineTo(fs.x + 9, fs.y + 7);
+      ctx.lineTo(fs.x + 13, fs.y + 7);
+      ctx.moveTo(fs.x + fs.w - 9, fs.y + 11);
+      ctx.lineTo(fs.x + fs.w - 9, fs.y + 7);
+      ctx.lineTo(fs.x + fs.w - 13, fs.y + 7);
+      ctx.moveTo(fs.x + 9, fs.y + fs.h - 11);
+      ctx.lineTo(fs.x + 9, fs.y + fs.h - 7);
+      ctx.lineTo(fs.x + 13, fs.y + fs.h - 7);
+      ctx.moveTo(fs.x + fs.w - 9, fs.y + fs.h - 11);
+      ctx.lineTo(fs.x + fs.w - 9, fs.y + fs.h - 7);
+      ctx.lineTo(fs.x + fs.w - 13, fs.y + fs.h - 7);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawMiniMap() {
+      const w = Math.min(150, Math.max(108, width * 0.18));
+      const h = w * 0.66;
+      const x = Math.max(10, width - w - 16);
+      const y = 98;
+      const sx = w / world.w;
+      const sy = h / world.h;
+      ctx.save();
+      ctx.globalAlpha = 0.88;
+      ctx.fillStyle = "rgba(3, 5, 8, 0.66)";
+      ctx.strokeStyle = "rgba(205, 225, 240, 0.28)";
+      ctx.lineWidth = 1;
+      roundRect(x, y, w, h, 7);
+      ctx.fill();
+      ctx.stroke();
+      ctx.save();
+      ctx.beginPath();
+      roundRect(x, y, w, h, 7);
+      ctx.clip();
+      ctx.fillStyle = "rgba(255,255,255,0.14)";
+      for (const wall of walls) ctx.fillRect(x + wall.x * sx, y + wall.y * sy, wall.w * sx, wall.h * sy);
+      ctx.fillStyle = "rgba(190, 150, 95, 0.7)";
+      for (const prop of props) {
+        const r = propCollisionRect(prop);
+        ctx.fillRect(x + r.x * sx, y + r.y * sy, Math.max(2, r.w * sx), Math.max(2, r.h * sy));
+      }
+      ctx.fillStyle = "#ff5a4f";
+      for (const e of enemies) if (isVisibleInPlayerCone(e.x, e.y, e.r)) {
+        ctx.beginPath();
+        ctx.arc(x + e.x * sx, y + e.y * sy, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = "#8ed7ff";
+      ctx.beginPath();
+      ctx.arc(x + player.x * sx, y + player.y * sy, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
       ctx.restore();
     }
 
@@ -5519,6 +5610,8 @@
       if (state !== "play") continue;
       if (handleGameMenuButtonClick(p.x, p.y)) return;
       if (handleSpecialForcesToggleClick(p.x, p.y)) return;
+      if (handleFullscreenButtonClick(p.x, p.y)) return;
+      if (handleCameraButtonClick(p.x, p.y)) return;
       const action = mobileActionAt(p.x, p.y);
         if (action === "weapon") {
           mobileControls.weaponTouchId = touch.identifier;
@@ -5566,15 +5659,13 @@
         }
         if (touch.identifier === mobileControls.aimId) {
           if (selectedWeapon === "bomb") throwBomb(mobileAimWorldTarget());
+          if (selectedWeapon === "flamer") firePlayerFlamer();
           if (selectedWeapon === "ice") fireIceStorm();
           if (selectedWeapon === "barricade") placeBarricadeFromAim();
           mobileControls.aimId = null;
         }
         if (touch.identifier === mobileControls.weaponTouchId) {
-          const p = touchPoint(touch);
-          mobileControls.weaponDragX = p.x - mobileControls.weaponTouchX;
-          mobileControls.weaponReady = availableWeapons().length > 1 && mobileControls.weaponDragX <= -46;
-          if (mobileControls.weaponReady) cycleWeapon();
+          if (availableWeapons().length > 1) cycleWeapon();
           mobileControls.weaponTouchId = null;
           mobileControls.weaponTouchX = 0;
           mobileControls.weaponTouchY = 0;
@@ -5619,8 +5710,8 @@
         } else if (touch.identifier === mobileControls.aimId) {
           updateMobileAttackStick(p.x, p.y, false);
         } else if (touch.identifier === mobileControls.weaponTouchId) {
-          mobileControls.weaponDragX = p.x - mobileControls.weaponTouchX;
-          mobileControls.weaponReady = availableWeapons().length > 1 && mobileControls.weaponDragX <= -46;
+          mobileControls.weaponDragX = 0;
+          mobileControls.weaponReady = false;
         }
       }
     }
@@ -6445,15 +6536,16 @@
         selectedWeapon = "rifle";
         bombCount = 1;
         flameAmmo = 120;
-        const weaponBeforeDrag = selectedWeapon;
-        mobileControls.weaponTouchX = 300;
-        mobileControls.weaponDragX = -30;
-        mobileControls.weaponReady = availableWeapons().length > 1 && mobileControls.weaponDragX <= -46;
-        const shortWeaponDragDoesNotSwitch = !mobileControls.weaponReady && selectedWeapon === weaponBeforeDrag;
-        mobileControls.weaponDragX = -54;
-        mobileControls.weaponReady = availableWeapons().length > 1 && mobileControls.weaponDragX <= -46;
-        if (mobileControls.weaponReady) cycleWeapon();
-        const longWeaponDragSwitchesOnRelease = selectedWeapon !== weaponBeforeDrag;
+        const weaponBeforeTap = selectedWeapon;
+        if (availableWeapons().length > 1) cycleWeapon();
+        const weaponTapSwitchesOnRelease = selectedWeapon !== weaponBeforeTap;
+        selectedWeapon = "rifle";
+        bombCount = 0;
+        flameAmmo = 0;
+        iceAmmo = 0;
+        barricadeCount = 0;
+        if (availableWeapons().length > 1) cycleWeapon();
+        const weaponTapNeedsAnotherWeapon = selectedWeapon === "rifle";
         state = "play";
         keys.add("Space");
         keys.add("KeyD");
@@ -6603,8 +6695,8 @@
           iceStormFreezesEnemy,
           iceDamagesCrate,
           flamerDamagesCrate,
-          shortWeaponDragDoesNotSwitch,
-          longWeaponDragSwitchesOnRelease,
+          weaponTapSwitchesOnRelease,
+          weaponTapNeedsAnotherWeapon,
           dashThreeUsesStartsCooldown,
           dashCooldownRefillsCharges,
           mobileSpecialToggleWorks,
