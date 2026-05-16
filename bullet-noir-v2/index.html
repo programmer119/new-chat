@@ -18,6 +18,7 @@
       height: 100%;
       height: 100dvh;
       overflow: hidden;
+      overscroll-behavior: none;
       background: #050706;
       color: #e8e3d6;
       font-family: Arial, sans-serif;
@@ -41,10 +42,14 @@
     }
 
     body.app-fullscreen {
+      position: fixed;
+      inset: 0;
+      display: block;
       overflow: hidden;
       background: #000;
       min-height: 100vh;
       min-height: 100dvh;
+      touch-action: none;
     }
 
     body.app-fullscreen canvas {
@@ -55,6 +60,10 @@
       height: 100dvh !important;
       max-width: none;
       z-index: 9999;
+    }
+
+    body.app-fullscreen #loading {
+      display: none;
     }
 
     @media (orientation: landscape) and (max-height: 620px) {
@@ -85,8 +94,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "SINGLE VERSION";
-    const BUILD_VERSION = "2.0.14";
-    const BUILD_TIMESTAMP = "2026-05-17 00:00:00 KST";
+    const BUILD_VERSION = "2.0.15";
+    const BUILD_TIMESTAMP = "2026-05-17 00:18:00 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -260,6 +269,7 @@
     const lightCtx = lightCanvas.getContext("2d");
 
     function resize() {
+      syncFullscreenViewport();
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const rect = canvas.getBoundingClientRect();
       const cssWidth = Math.max(1, Math.round(rect.width));
@@ -280,6 +290,7 @@
     document.addEventListener("fullscreenchange", resize);
     document.addEventListener("webkitfullscreenchange", resize);
     if (window.visualViewport) window.visualViewport.addEventListener("resize", resize);
+    if (window.visualViewport) window.visualViewport.addEventListener("scroll", resize);
     window.addEventListener("orientationchange", () => {
       resize();
       setTimeout(resize, 80);
@@ -5470,45 +5481,63 @@
     async function toggleFullscreen() {
       const doc = document;
       const el = document.documentElement;
-      const active = doc.fullscreenElement || doc.webkitFullscreenElement;
+      const active = isAppFullscreenActive();
       try {
         if (active) {
-          if (doc.exitFullscreen) await doc.exitFullscreen();
-          else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen();
-          document.body.classList.remove("app-fullscreen");
-          virtualFullscreen = false;
-          resize();
+          if (doc.fullscreenElement && doc.exitFullscreen) await doc.exitFullscreen();
+          else if (doc.webkitFullscreenElement && doc.webkitExitFullscreen) doc.webkitExitFullscreen();
+          exitGameFullscreen();
           showGameToast("FULLSCREEN OFF");
           return;
         }
         if (el.requestFullscreen) {
           await el.requestFullscreen({ navigationUI: "hide" });
+          virtualFullscreen = true;
           hideBrowserChrome();
           showGameToast("FULLSCREEN ON");
           return;
         }
         if (el.webkitRequestFullscreen) {
           el.webkitRequestFullscreen();
+          virtualFullscreen = true;
           hideBrowserChrome();
           showGameToast("FULLSCREEN ON");
           return;
         }
       } catch (err) {
-        virtualFullscreen = !virtualFullscreen;
-        document.body.classList.toggle("app-fullscreen", virtualFullscreen);
-        resize();
-        showGameToast(virtualFullscreen ? "FULLSCREEN ON" : "FULLSCREEN OFF");
+        enterGameFullscreen();
+        showGameToast("FULLSCREEN ON");
         return;
       }
-      virtualFullscreen = !virtualFullscreen;
-      document.body.classList.toggle("app-fullscreen", virtualFullscreen);
+      enterGameFullscreen();
+      showGameToast("FULLSCREEN ON");
+    }
+
+    function isAppFullscreenActive() {
+      return !!(document.fullscreenElement || document.webkitFullscreenElement || document.body.classList.contains("app-fullscreen"));
+    }
+
+    function enterGameFullscreen() {
+      virtualFullscreen = true;
+      hideBrowserChrome();
+    }
+
+    function exitGameFullscreen() {
+      virtualFullscreen = false;
+      document.body.classList.remove("app-fullscreen");
+      canvas.style.position = "";
+      canvas.style.left = "";
+      canvas.style.top = "";
+      canvas.style.width = "";
+      canvas.style.height = "";
+      canvas.style.zIndex = "";
       resize();
-      if (virtualFullscreen) hideBrowserChrome();
-      showGameToast(virtualFullscreen ? "FULLSCREEN ON" : "FULLSCREEN OFF");
     }
 
     function hideBrowserChrome() {
+      virtualFullscreen = true;
       document.body.classList.add("app-fullscreen");
+      syncFullscreenViewport();
       setTimeout(() => {
         window.scrollTo(0, 1);
         resize();
@@ -5517,6 +5546,21 @@
         window.scrollTo(0, 1);
         resize();
       }, 350);
+    }
+
+    function syncFullscreenViewport() {
+      if (!document.body.classList.contains("app-fullscreen")) return;
+      const vv = window.visualViewport;
+      const vw = Math.max(1, Math.round(vv ? vv.width : window.innerWidth));
+      const vh = Math.max(1, Math.round(vv ? vv.height : window.innerHeight));
+      const vx = Math.round(vv ? vv.offsetLeft : 0);
+      const vy = Math.round(vv ? vv.offsetTop : 0);
+      canvas.style.position = "fixed";
+      canvas.style.left = vx + "px";
+      canvas.style.top = vy + "px";
+      canvas.style.width = vw + "px";
+      canvas.style.height = vh + "px";
+      canvas.style.zIndex = "9999";
     }
 
     function showGameToast(text, ok = true) {
