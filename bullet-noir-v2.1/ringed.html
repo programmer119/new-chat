@@ -5,7 +5,11 @@
   <meta http-equiv="Cache-Control" content="no-store, max-age=0">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="SANG SUB">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>SANG SUB</title>
   <style>
     html, body {
@@ -39,6 +43,8 @@
     body.app-fullscreen {
       overflow: hidden;
       background: #000;
+      min-height: 100vh;
+      min-height: 100dvh;
     }
 
     body.app-fullscreen canvas {
@@ -81,8 +87,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.56";
-    const BUILD_TIMESTAMP = "2026-05-16 20:41:00 KST";
+    const BUILD_VERSION = "2.1.57";
+    const BUILD_TIMESTAMP = "2026-05-16 20:52:00 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -8973,16 +8979,21 @@
         if (active) {
           if (doc.exitFullscreen) await doc.exitFullscreen();
           else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen();
+          document.body.classList.remove("app-fullscreen");
+          virtualFullscreen = false;
+          resize();
           showGameToast("FULLSCREEN OFF");
           return;
         }
         if (el.requestFullscreen) {
           await el.requestFullscreen({ navigationUI: "hide" });
+          hideBrowserChrome();
           showGameToast("FULLSCREEN ON");
           return;
         }
         if (el.webkitRequestFullscreen) {
           el.webkitRequestFullscreen();
+          hideBrowserChrome();
           showGameToast("FULLSCREEN ON");
           return;
         }
@@ -8996,7 +9007,20 @@
       virtualFullscreen = !virtualFullscreen;
       document.body.classList.toggle("app-fullscreen", virtualFullscreen);
       resize();
+      if (virtualFullscreen) hideBrowserChrome();
       showGameToast(virtualFullscreen ? "FULLSCREEN ON" : "FULLSCREEN OFF");
+    }
+
+    function hideBrowserChrome() {
+      document.body.classList.add("app-fullscreen");
+      setTimeout(() => {
+        window.scrollTo(0, 1);
+        resize();
+      }, 50);
+      setTimeout(() => {
+        window.scrollTo(0, 1);
+        resize();
+      }, 350);
     }
 
     function showGameToast(text, ok = true) {
