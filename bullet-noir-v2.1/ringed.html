@@ -81,8 +81,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.55";
-    const BUILD_TIMESTAMP = "2026-05-16 20:26:00 KST";
+    const BUILD_VERSION = "2.1.56";
+    const BUILD_TIMESTAMP = "2026-05-16 20:41:00 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -385,6 +385,8 @@
     }
 
     window.addEventListener("resize", resize);
+    document.addEventListener("fullscreenchange", resize);
+    document.addEventListener("webkitfullscreenchange", resize);
     if (window.visualViewport) window.visualViewport.addEventListener("resize", resize);
     window.addEventListener("orientationchange", () => {
       resize();
@@ -426,15 +428,15 @@
     });
     window.addEventListener("keyup", (event) => keys.delete(event.code));
     window.addEventListener("mousemove", (event) => {
-      const rect = canvas.getBoundingClientRect();
-      mouse.x = event.clientX - rect.left;
-      mouse.y = event.clientY - rect.top;
+      const p = inputPointFromClient(event.clientX, event.clientY);
+      mouse.x = p.x;
+      mouse.y = p.y;
       if (state === "maptool") updateMapToolPreview();
     });
     window.addEventListener("mousedown", (event) => {
-      const rect = canvas.getBoundingClientRect();
-      mouse.x = event.clientX - rect.left;
-      mouse.y = event.clientY - rect.top;
+      const p = inputPointFromClient(event.clientX, event.clientY);
+      mouse.x = p.x;
+      mouse.y = p.y;
       ensureAudio();
       startVoiceCommands();
       if (state === "intro") {
@@ -9279,8 +9281,17 @@
     }
 
     function touchPoint(touch) {
+      return inputPointFromClient(touch.clientX, touch.clientY);
+    }
+
+    function inputPointFromClient(clientX, clientY) {
       const rect = canvas.getBoundingClientRect();
-      return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+      const rectW = rect.width || width || 1;
+      const rectH = rect.height || height || 1;
+      return {
+        x: (clientX - rect.left) * (width / rectW),
+        y: (clientY - rect.top) * (height / rectH)
+      };
     }
 
     function updateMobileStick(x, y) {
