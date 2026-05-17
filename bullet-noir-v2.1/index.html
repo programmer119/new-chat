@@ -107,8 +107,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.73";
-    const BUILD_TIMESTAMP = "2026-05-17 14:44:25 KST";
+    const BUILD_VERSION = "2.1.74";
+    const BUILD_TIMESTAMP = "2026-05-17 17:15:35 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -2694,13 +2694,26 @@
       return Math.abs(d);
     }
 
-    function isVisibleInPlayerCone(x, y, radius = 0) {
-      const dx = x - player.x;
-      const dy = y - player.y;
+    function isVisibleInActorCone(actor, x, y, radius = 0) {
+      if (!actor || (actor !== player && (actor.hp || 0) <= 0)) return false;
+      const dx = x - actor.x;
+      const dy = y - actor.y;
       const d = Math.hypot(dx, dy);
       if (d < Math.max(34, radius + 18)) return true;
-      if (angleDistance(Math.atan2(dy, dx), player.angle) > PLAYER_VIEW_ANGLE * 0.5) return false;
-      return hasLineOfSight(player.x, player.y, x, y, d);
+      if (angleDistance(Math.atan2(dy, dx), Number(actor.angle) || 0) > PLAYER_VIEW_ANGLE * 0.5) return false;
+      return hasLineOfSight(actor.x, actor.y, x, y, d);
+    }
+
+    function isVisibleInPlayerCone(x, y, radius = 0) {
+      return isVisibleInActorCone(player, x, y, radius);
+    }
+
+    function isVisibleInTeamCone(x, y, radius = 0) {
+      if (isVisibleInPlayerCone(x, y, radius)) return true;
+      for (const remote of coopRemotePeers()) {
+        if (isVisibleInActorCone(remote, x, y, radius)) return true;
+      }
+      return false;
     }
 
     function explosionBlockers(options = {}) {
@@ -5052,7 +5065,7 @@
       drawFlameBursts();
       drawIceStorms();
       drawPvpEntities();
-      for (const e of enemies) if (isVisibleInPlayerCone(e.x, e.y, e.r)) drawEnemy(e);
+      for (const e of enemies) if (isVisibleInTeamCone(e.x, e.y, e.r)) drawEnemy(e);
       drawSpeechBubbles();
       drawPlayer();
       drawRemoteCoopPeer();
@@ -9400,7 +9413,7 @@
         ctx.fillRect(x + r.x * sx, y + r.y * sy, Math.max(2, r.w * sx), Math.max(2, r.h * sy));
       }
       ctx.fillStyle = "#ff5a4f";
-      for (const e of enemies) if (isVisibleInPlayerCone(e.x, e.y, e.r)) {
+      for (const e of enemies) if (isVisibleInTeamCone(e.x, e.y, e.r)) {
         ctx.beginPath();
         ctx.arc(x + e.x * sx, y + e.y * sy, 2.2, 0, Math.PI * 2);
         ctx.fill();
@@ -10645,6 +10658,18 @@
           Number.isFinite(remoteFlashlight.py) &&
           Number.isFinite(remoteFlashlight.angle) &&
           remoteFlashlight.energy > 0.3;
+        walls.length = 0;
+        doors.length = 0;
+        coop.role = "host";
+        coop.connected = true;
+        player.x = 300;
+        player.y = 500;
+        player.angle = Math.PI;
+        player.hp = 100;
+        coop.remote = { x: 700, y: 500, hp: 100, angle: 0, r: 24, collisionR: 15, last: performance.now(), weapon: "rifle" };
+        const coopRemoteVisionRevealsEnemy = !isVisibleInPlayerCone(820, 500, 18) && isVisibleInTeamCone(820, 500, 18);
+        walls.push({ x: 760, y: 450, w: 36, h: 110 });
+        const coopRemoteVisionBlockedByWall = !isVisibleInTeamCone(820, 500, 18);
         coop.role = "host";
         coop.connected = true;
         coop.remote = { x: 700, y: 500, hp: 100, r: 24, collisionR: 15, last: performance.now(), weapon: "rifle" };
@@ -11115,6 +11140,8 @@
           coopGuestRifleDamagesHostCrate,
           coopRemoteWallShotShowsImpact,
           coopRemoteFlashlightIsVisible,
+          coopRemoteVisionRevealsEnemy,
+          coopRemoteVisionBlockedByWall,
           deadHostTargetsRemote,
           coopReviveDoesNotResetMap,
           coopHostWorldContinuesWhileDead,
