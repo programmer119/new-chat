@@ -107,8 +107,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.65";
-    const BUILD_TIMESTAMP = "2026-05-17 02:52:00 KST";
+    const BUILD_VERSION = "2.1.66";
+    const BUILD_TIMESTAMP = "2026-05-17 03:24:00 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -330,6 +330,7 @@
     let pvpCountdown = 0;
     let pvpWinner = "";
     let pvpRoundActive = false;
+    let pvpGuestPlacedFromMap = false;
     let pvpControlSeq = 0;
     let pvpSeenControlSeq = 0;
     const pvpLanePaths = {
@@ -751,16 +752,18 @@
         if (params.get("mobile") === "0") return false;
       } catch (error) {}
       const ua = navigator.userAgent || "";
-      const mobileUa = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(ua);
-      if (mobileUa) return true;
+      const phoneUa = /iPhone|iPod|Windows Phone/i.test(ua) || /Android/i.test(ua) && /Mobile/i.test(ua);
+      if (phoneUa) return true;
       const touchPoints = navigator.maxTouchPoints || navigator.msMaxTouchPoints || 0;
       const hasTouch = touchPoints > 0;
       if (!hasTouch) return false;
+      const primaryCoarse = !window.matchMedia || window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+      const tabletUa = /iPad/i.test(ua) || /Android/i.test(ua);
+      if (tabletUa && primaryCoarse) return true;
       const minSide = Math.min(window.innerWidth || 9999, window.innerHeight || 9999);
       const maxSide = Math.max(window.innerWidth || 0, window.innerHeight || 0);
-      const compactTouch = minSide <= 980 && maxSide <= 1180;
-      const coarse = !window.matchMedia || window.matchMedia("(hover: none), (pointer: coarse), (any-pointer: coarse)").matches;
-      return hasTouch && (compactTouch || coarse);
+      const compactTouch = minSide <= 820 && maxSide <= 1180;
+      return hasTouch && compactTouch && primaryCoarse;
     }
 
     function makeAudio(src, volume) {
@@ -1452,6 +1455,7 @@
       pvpCountdown = 0;
       pvpWinner = "";
       pvpRoundActive = false;
+      pvpGuestPlacedFromMap = false;
     }
 
     function buildPvpMap() {
@@ -1621,12 +1625,14 @@
           ensurePropHealth(props[props.length - 1]);
         }
       }
-      if (currentMapMode === "pvp" && coop.role === "guest") {
+      if (currentMapMode !== "pvp") pvpGuestPlacedFromMap = false;
+      if (currentMapMode === "pvp" && coop.role === "guest" && !pvpGuestPlacedFromMap) {
         const start = pvpSpawnForLocalPlayer();
         player.x = start.x;
         player.y = start.y;
         player.angle = start.angle;
         player.targetAngle = start.angle;
+        pvpGuestPlacedFromMap = true;
         if (isMobile) initMobileAimCursor();
       }
     }
@@ -2992,18 +2998,20 @@
 
     function beginPvpCountdown() {
       if (currentMapMode !== "pvp") return;
-      const blueStart = pvpSpawnForTeam("blue");
-      const redStart = pvpSpawnForTeam("red");
-      player.x = blueStart.x;
-      player.y = blueStart.y;
-      player.angle = blueStart.angle;
-      player.targetAngle = blueStart.angle;
+      const localTeam = coop.role === "guest" ? "red" : "blue";
+      const remoteTeam = localTeam === "red" ? "blue" : "red";
+      const localStart = pvpSpawnForTeam(localTeam);
+      const remoteStart = pvpSpawnForTeam(remoteTeam);
+      player.x = localStart.x;
+      player.y = localStart.y;
+      player.angle = localStart.angle;
+      player.targetAngle = localStart.angle;
       if (coop.remote) {
-        coop.remote.x = redStart.x;
-        coop.remote.y = redStart.y;
-        coop.remote.tx = redStart.x;
-        coop.remote.ty = redStart.y;
-        coop.remote.team = "red";
+        coop.remote.x = remoteStart.x;
+        coop.remote.y = remoteStart.y;
+        coop.remote.tx = remoteStart.x;
+        coop.remote.ty = remoteStart.y;
+        coop.remote.team = remoteTeam;
       }
       pvpCountdown = 3.25;
       pvpWinner = "";
@@ -10001,6 +10009,7 @@
       const savedPvpCountdown = pvpCountdown;
       const savedPvpWinner = pvpWinner;
       const savedPvpRoundActive = pvpRoundActive;
+      const savedPvpGuestPlacedFromMap = pvpGuestPlacedFromMap;
       const savedMapMode = currentMapMode;
       const savedState = state;
       const savedIntroTimer = introTimer;
@@ -10681,6 +10690,21 @@
         const pvpResultButtonsExist = !!pvpWinner && pvpResultButtonRects().restart.w > 0 && pvpResultButtonRects().leave.w > 0;
         restartPvpRoundLocal();
         const pvpRestartReturnsCountdown = currentMapMode === "pvp" && pvpCountdown > 0 && !pvpWinner && pvpRoundActive === false;
+        coop.role = "guest";
+        currentMapMode = "default";
+        pvpGuestPlacedFromMap = false;
+        const pvpMapForGuest = serializeMapData();
+        pvpMapForGuest.mapMode = "pvp";
+        applyMapData(pvpMapForGuest);
+        const guestSpawnX = player.x;
+        player.x = guestSpawnX - 180;
+        player.y += 35;
+        applyMapData(pvpMapForGuest);
+        const pvpGuestMapSyncDoesNotRespawn = Math.abs(player.x - (guestSpawnX - 180)) < 0.01;
+        coop.remote = { x: 500, y: 500, hp: 100, r: 24, collisionR: 15, last: performance.now(), weapon: "rifle" };
+        currentMapMode = "pvp";
+        beginPvpCountdown();
+        const pvpGuestCountdownStartsRed = player.x > world.w / 2 && Math.abs(player.angle - Math.PI) < 0.01 && coop.remote.team === "blue";
         finishPvpRound("red");
         leavePvpRoundLocal(false);
         const pvpLeaveReturnsSingleMode = currentMapMode === "default" && state === "play" && !pvpWinner;
@@ -10822,6 +10846,8 @@
           pvpBaseDestroyedEndsRound,
           pvpResultButtonsExist,
           pvpRestartReturnsCountdown,
+          pvpGuestMapSyncDoesNotRespawn,
+          pvpGuestCountdownStartsRed,
           pvpLeaveReturnsSingleMode
         };
       } finally {
@@ -10863,6 +10889,7 @@
         pvpCountdown = savedPvpCountdown;
         pvpWinner = savedPvpWinner;
         pvpRoundActive = savedPvpRoundActive;
+        pvpGuestPlacedFromMap = savedPvpGuestPlacedFromMap;
         currentMapMode = savedMapMode;
         state = savedState;
         introTimer = savedIntroTimer;

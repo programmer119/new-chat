@@ -105,8 +105,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "SINGLE VERSION";
-    const BUILD_VERSION = "2.0.21";
-    const BUILD_TIMESTAMP = "2026-05-17 02:52:00 KST";
+    const BUILD_VERSION = "2.0.22";
+    const BUILD_TIMESTAMP = "2026-05-17 03:24:00 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -623,16 +623,18 @@
         if (params.get("mobile") === "0") return false;
       } catch (error) {}
       const ua = navigator.userAgent || "";
-      const mobileUa = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(ua);
-      if (mobileUa) return true;
+      const phoneUa = /iPhone|iPod|Windows Phone/i.test(ua) || /Android/i.test(ua) && /Mobile/i.test(ua);
+      if (phoneUa) return true;
       const touchPoints = navigator.maxTouchPoints || navigator.msMaxTouchPoints || 0;
       const hasTouch = touchPoints > 0;
       if (!hasTouch) return false;
+      const primaryCoarse = !window.matchMedia || window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+      const tabletUa = /iPad/i.test(ua) || /Android/i.test(ua);
+      if (tabletUa && primaryCoarse) return true;
       const minSide = Math.min(window.innerWidth || 9999, window.innerHeight || 9999);
       const maxSide = Math.max(window.innerWidth || 0, window.innerHeight || 0);
-      const compactTouch = minSide <= 980 && maxSide <= 1180;
-      const coarse = !window.matchMedia || window.matchMedia("(hover: none), (pointer: coarse), (any-pointer: coarse)").matches;
-      return hasTouch && compactTouch && coarse;
+      const compactTouch = minSide <= 820 && maxSide <= 1180;
+      return hasTouch && compactTouch && primaryCoarse;
     }
 
     function makeAudio(src, volume) {
