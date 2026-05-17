@@ -107,8 +107,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.72";
-    const BUILD_TIMESTAMP = "2026-05-17 14:23:13 KST";
+    const BUILD_VERSION = "2.1.73";
+    const BUILD_TIMESTAMP = "2026-05-17 14:44:25 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -3158,6 +3158,55 @@
       return actors;
     }
 
+    function pvpPointInRect(x, y, rect) {
+      return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+    }
+
+    function pvpSegmentSide(ax, ay, bx, by, cx, cy) {
+      return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    }
+
+    function pvpSegmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
+      const s1 = pvpSegmentSide(ax, ay, bx, by, cx, cy);
+      const s2 = pvpSegmentSide(ax, ay, bx, by, dx, dy);
+      const s3 = pvpSegmentSide(cx, cy, dx, dy, ax, ay);
+      const s4 = pvpSegmentSide(cx, cy, dx, dy, bx, by);
+      return s1 * s2 <= 0 && s3 * s4 <= 0;
+    }
+
+    function pvpSegmentHitsRect(x1, y1, x2, y2, rect, pad = 7) {
+      const r = { x: rect.x - pad, y: rect.y - pad, w: rect.w + pad * 2, h: rect.h + pad * 2 };
+      if (pvpPointInRect(x1, y1, r) || pvpPointInRect(x2, y2, r)) return true;
+      const x3 = r.x;
+      const y3 = r.y;
+      const x4 = r.x + r.w;
+      const y4 = r.y + r.h;
+      return (
+        pvpSegmentsIntersect(x1, y1, x2, y2, x3, y3, x4, y3) ||
+        pvpSegmentsIntersect(x1, y1, x2, y2, x4, y3, x4, y4) ||
+        pvpSegmentsIntersect(x1, y1, x2, y2, x4, y4, x3, y4) ||
+        pvpSegmentsIntersect(x1, y1, x2, y2, x3, y4, x3, y3)
+      );
+    }
+
+    function pvpSegmentBlockedByMap(x1, y1, x2, y2, pad = 7) {
+      for (const wall of walls) {
+        if (pvpSegmentHitsRect(x1, y1, x2, y2, wall, pad)) return true;
+      }
+      for (const door of doors) {
+        if ((door.open || 0) >= 0.82) continue;
+        for (const rect of doorCollisionRects(door)) {
+          if (pvpSegmentHitsRect(x1, y1, x2, y2, rect, pad)) return true;
+        }
+      }
+      return false;
+    }
+
+    function pvpCanEngageTarget(unit, target) {
+      if (!target) return false;
+      return !pvpSegmentBlockedByMap(unit.x, unit.y, target.x, target.y, 9);
+    }
+
     function nearestPvpTarget(unit, range) {
       let best = null;
       let bestD = range * range;
@@ -3165,7 +3214,7 @@
       for (const other of pvpMinions) {
         if (other.team !== enemyTeam || other.hp <= 0 || (other.spawnDelay || 0) > 0) continue;
         const d = dist2(unit.x, unit.y, other.x, other.y);
-        if (d < bestD) {
+        if (d < bestD && pvpCanEngageTarget(unit, other)) {
           bestD = d;
           best = other;
         }
@@ -3173,7 +3222,7 @@
       for (const tower of pvpTowers) {
         if (tower.team !== enemyTeam || tower.hp <= 0) continue;
         const d = dist2(unit.x, unit.y, tower.x, tower.y);
-        if (d < bestD) {
+        if (d < bestD && pvpCanEngageTarget(unit, tower)) {
           bestD = d;
           best = tower;
         }
@@ -3181,14 +3230,14 @@
       for (const base of pvpBases) {
         if (base.team !== enemyTeam || base.hp <= 0) continue;
         const d = dist2(unit.x, unit.y, base.x, base.y);
-        if (d < bestD) {
+        if (d < bestD && pvpCanEngageTarget(unit, base)) {
           bestD = d;
           best = base;
         }
       }
       for (const actor of pvpEnemyActors(unit.team)) {
         const d = dist2(unit.x, unit.y, actor.x, actor.y);
-        if (d < bestD) {
+        if (d < bestD && pvpCanEngageTarget(unit, actor)) {
           bestD = d;
           best = actor;
         }
@@ -10803,6 +10852,49 @@
         );
         pvpMinions.length = 0;
         for (const minion of savedPathRunMinions) pvpMinions.push(minion);
+        const targetLosWalls = walls.slice();
+        const targetLosDoors = doors.slice();
+        const targetLosMinions = pvpMinions.slice();
+        const targetLosTowers = pvpTowers.slice();
+        const targetLosBases = pvpBases.slice();
+        walls.length = 0;
+        doors.length = 0;
+        pvpMinions.length = 0;
+        pvpTowers.length = 0;
+        pvpBases.length = 0;
+        player.hp = 0;
+        coop.remote = null;
+        const blockedBlueMinion = { team: "blue", lane: "mid", pathIndex: 1, laneOffset: 0, x: 560, y: 500, r: 13, hp: 90, maxHp: 90, shoot: 0, spawnDelay: 0 };
+        const blockedRedMinion = { team: "red", lane: "mid", pathIndex: 1, laneOffset: 0, x: 655, y: 500, r: 13, hp: 90, maxHp: 90, shoot: 0, spawnDelay: 0 };
+        walls.push({ x: 602, y: 420, w: 42, h: 180 });
+        pvpMinions.push(blockedBlueMinion, blockedRedMinion);
+        const pvpBlockedEnemyBehindWallIgnored = nearestPvpTarget(blockedBlueMinion, 150) === null;
+        walls.length = 0;
+        const pvpVisibleEnemyStillTargeted = nearestPvpTarget(blockedBlueMinion, 150) === blockedRedMinion;
+        const pileMinions = [-24, -8, 8, 24].map((offset) => ({ team: "blue", lane: "mid", pathIndex: 1, laneOffset: offset, x: 560, y: 500 + offset * 0.25, r: 13, hp: 90, maxHp: 90, shoot: 0, spawnDelay: 0 }));
+        walls.push({ x: 602, y: 420, w: 42, h: 180 });
+        pvpMinions.length = 0;
+        for (const minion of pileMinions) pvpMinions.push(minion);
+        pvpMinions.push(blockedRedMinion);
+        let blockedPileStoppedForTarget = false;
+        for (let step = 0; step < 90; step++) {
+          for (const minion of pileMinions) {
+            if (nearestPvpTarget(minion, 150) === blockedRedMinion) blockedPileStoppedForTarget = true;
+            spreadPvpMinionFromFriends(minion, 0.05);
+          }
+        }
+        const maxBlockedPileCluster = pileMinions.reduce((max, minion) => Math.max(max, pileMinions.filter((other) => dist2(minion.x, minion.y, other.x, other.y) < 24 * 24).length), 0);
+        const pvpBlockedEnemyDoesNotCreatePile = !blockedPileStoppedForTarget && maxBlockedPileCluster <= 3;
+        walls.length = 0;
+        doors.length = 0;
+        pvpMinions.length = 0;
+        pvpTowers.length = 0;
+        pvpBases.length = 0;
+        for (const wall of targetLosWalls) walls.push(wall);
+        for (const door of targetLosDoors) doors.push(door);
+        for (const minion of targetLosMinions) pvpMinions.push(minion);
+        for (const tower of targetLosTowers) pvpTowers.push(tower);
+        for (const base of targetLosBases) pvpBases.push(base);
         for (const door of doors) {
           door.open = 0;
           door.target = 0;
@@ -11063,6 +11155,9 @@
           pvpMinionCombatSeparation,
           pvpMinionsKeepProgressingAroundWalls,
           pvpNoIdleMinionsAfterPathRun,
+          pvpBlockedEnemyBehindWallIgnored,
+          pvpVisibleEnemyStillTargeted,
+          pvpBlockedEnemyDoesNotCreatePile,
           pvpWorldSyncs,
           pvpMapSerializesMode,
           pvpLaneDoors,
