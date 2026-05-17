@@ -107,8 +107,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.70";
-    const BUILD_TIMESTAMP = "2026-05-17 04:28:00 KST";
+    const BUILD_VERSION = "2.1.71";
+    const BUILD_TIMESTAMP = "2026-05-17 04:43:00 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -3071,10 +3071,21 @@
       const ax = next.x - prev.x;
       const ay = next.y - prev.y;
       const len = Math.hypot(ax, ay) || 1;
-      return {
-        x: point.x - ay / len * offset,
-        y: point.y + ax / len * offset
-      };
+      const normalX = -ay / len;
+      const normalY = ax / len;
+      for (const scale of [1, 0.65, 0.35, 0]) {
+        const x = point.x + normalX * offset * scale;
+        const y = point.y + normalY * offset * scale;
+        if (!pvpPathPointBlockedByWall(x, y, 16)) return { x, y };
+      }
+      return { x: point.x, y: point.y };
+    }
+
+    function pvpPathPointBlockedByWall(x, y, r) {
+      for (const wall of walls) {
+        if (circleRect(x, y, r, wall)) return true;
+      }
+      return false;
     }
 
     function spreadPvpMinionFromFriends(minion, dt) {
@@ -10711,10 +10722,30 @@
           const laneMinions = pvpMinions.filter((minion) => minion.team === "blue" && minion.lane === lane);
           return laneMinions.some((minion) => minion.laneOffset < 0) && laneMinions.some((minion) => minion.laneOffset > 0);
         });
+        const pvpOffsetTargetsAvoidWalls = ["blue", "red"].every((team) =>
+          ["top", "mid", "bot"].every((lane) => {
+            const path = pvpLanePath(team, lane);
+            return [-28, 0, 28].every((offset) =>
+              path.every((_, index) => {
+                const p = pvpOffsetPathPoint(path, index, offset);
+                return !pvpPathPointBlockedByWall(p.x, p.y, 16);
+              })
+            );
+          })
+        );
+        const minionProgressBefore = pvpMinions.slice(0, 6).map((minion) => ({ minion, x: minion.x, y: minion.y }));
         const firstMinion = pvpMinions[0];
         const firstBefore = firstMinion ? { x: firstMinion.x, y: firstMinion.y } : { x: 0, y: 0 };
+        updateDoors(0.35);
         updatePvp(0.35);
         const pvpMinionsAdvance = !!firstMinion && Math.hypot(firstMinion.x - firstBefore.x, firstMinion.y - firstBefore.y) > 1;
+        for (let step = 0; step < 30; step++) {
+          updateDoors(0.12);
+          updatePvp(0.12);
+        }
+        const pvpMinionsKeepProgressingAroundWalls = minionProgressBefore.every(({ minion, x, y }) =>
+          !pvpMinions.includes(minion) || Math.hypot(minion.x - x, minion.y - y) > 36
+        );
         const pvpPayload = coopWorldPayload();
         const pvpWorldSyncs = pvpPayload.mapMode === "pvp" && pvpPayload.pvpTowers.length === pvpTowers.length && pvpPayload.pvpMinions.length === pvpMinions.length && Number.isFinite(pvpPayload.pvpMinions[1].spawnDelay) && Number.isFinite(pvpPayload.pvpMinions[1].laneOffset);
         const spreadA = { team: "blue", lane: "mid", pathIndex: 1, laneOffset: -28, x: 700, y: 800, r: 13, hp: 90, maxHp: 90, shoot: 1, spawnDelay: 0 };
@@ -10966,8 +10997,10 @@
           pvpInitialWaveSpawns,
           pvpWaveStaggersMinionBirth,
           pvpMinionLaneOffsetsExist,
+          pvpOffsetTargetsAvoidWalls,
           pvpMinionsAdvance,
           pvpMinionCombatSeparation,
+          pvpMinionsKeepProgressingAroundWalls,
           pvpWorldSyncs,
           pvpMapSerializesMode,
           pvpLaneDoors,
