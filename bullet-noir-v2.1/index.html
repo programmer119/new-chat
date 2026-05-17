@@ -107,8 +107,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.66";
-    const BUILD_TIMESTAMP = "2026-05-17 03:24:00 KST";
+    const BUILD_VERSION = "2.1.67";
+    const BUILD_TIMESTAMP = "2026-05-17 03:43:00 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -2996,9 +2996,18 @@
       return team === "red" ? { x: 1925, y: 800, angle: Math.PI } : { x: 275, y: 800, angle: 0 };
     }
 
+    function localPvpTeam() {
+      return coop.role === "guest" ? "red" : "blue";
+    }
+
+    function remotePvpTeam(remote = null) {
+      if (remote && remote.team) return remote.team;
+      return localPvpTeam() === "red" ? "blue" : "red";
+    }
+
     function beginPvpCountdown() {
       if (currentMapMode !== "pvp") return;
-      const localTeam = coop.role === "guest" ? "red" : "blue";
+      const localTeam = localPvpTeam();
       const remoteTeam = localTeam === "red" ? "blue" : "red";
       const localStart = pvpSpawnForTeam(localTeam);
       const remoteStart = pvpSpawnForTeam(remoteTeam);
@@ -3046,9 +3055,10 @@
 
     function pvpEnemyActors(team) {
       const actors = [];
-      if (team !== "blue" && player.hp > 0) actors.push(player);
+      const ownTeam = localPvpTeam();
+      if (team !== ownTeam && player.hp > 0) actors.push(player);
       for (const remote of coopRemotePeers()) {
-        const remoteTeam = remote.team || "red";
+        const remoteTeam = remotePvpTeam(remote);
         if (remoteTeam !== team && (remote.hp || 0) > 0) actors.push(remote);
       }
       return actors;
@@ -3939,13 +3949,7 @@
         const team = shooterTeam || (coop.role === "guest" ? "red" : "blue");
         const enemyTeam = team === "red" ? "blue" : "red";
         const pvpTargets = pvpMinions.concat(pvpTowers, pvpBases).filter((target) => target && target.team === enemyTeam && (target.hp || 0) > 0);
-        if (team === "blue") {
-          for (const remote of coopRemotePeers()) {
-            if ((remote.hp || 0) > 0) pvpTargets.push(remote);
-          }
-        } else if (player.hp > 0) {
-          pvpTargets.push(player);
-        }
+        for (const actor of pvpEnemyActors(team)) pvpTargets.push(actor);
         for (const target of pvpTargets) {
           const t = rayCircle(x, y, dx, dy, target.x, target.y, (target.r || 24) + 8);
           if (t !== null && t > 0 && t < best.t) {
@@ -8659,25 +8663,32 @@
       if (!peers.length) return;
       for (let i = 0; i < peers.length; i++) {
         const remote = peers[i];
+        const remoteTeam = currentMapMode === "pvp" ? remotePvpTeam(remote) : "";
+        const enemyPeer = currentMapMode === "pvp" && remoteTeam !== localPvpTeam();
+        const peerColor = enemyPeer ? pvpTeamColor(remoteTeam, 0.95) : "rgba(100,200,255,0.9)";
+        const peerFill = enemyPeer ? pvpTeamColor(remoteTeam, 0.95) : "#9ed8ff";
+        const peerLabel = currentMapMode === "pvp"
+          ? (enemyPeer ? "ENEMY" : "ALLY")
+          : (remote.guestClass === "healer" ? "HEALER" : (i === 0 ? "ALLY" : ("ALLY " + (i + 1))));
         ctx.save();
         ctx.globalAlpha = 0.86;
         ctx.translate(remote.x, remote.y);
         ctx.rotate(remote.angle);
-        ctx.shadowColor = "rgba(80,180,255,0.65)";
+        ctx.shadowColor = enemyPeer ? "rgba(255,91,78,0.65)" : "rgba(80,180,255,0.65)";
         ctx.shadowBlur = 16;
         drawTacticalHuman(23, false, remote.weapon !== "bomb", remote.guestClass === "healer" ? "healer" : (remote.weapon === "flamer" ? "flamer" : "shooter"));
         ctx.restore();
         ctx.save();
-        ctx.strokeStyle = "rgba(100,200,255,0.9)";
+        ctx.strokeStyle = peerColor;
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.arc(remote.x, remote.y, 31, 0, Math.PI * 2);
         ctx.stroke();
-        ctx.fillStyle = "#9ed8ff";
+        ctx.fillStyle = peerFill;
         ctx.font = "800 11px Arial";
         ctx.textAlign = "center";
-        ctx.fillText(remote.guestClass === "healer" ? "HEALER" : (i === 0 ? "ALLY" : ("ALLY " + (i + 1))), remote.x, remote.y - 36);
-        bar(remote.x - 24, remote.y - 31, 48, 5, remote.hp / 100, "#56b7ff", "#123044");
+        ctx.fillText(peerLabel, remote.x, remote.y - 36);
+        bar(remote.x - 24, remote.y - 31, 48, 5, remote.hp / 100, enemyPeer ? "#ff6b5e" : "#56b7ff", enemyPeer ? "#3a1716" : "#123044");
         ctx.restore();
       }
     }
@@ -10662,13 +10673,29 @@
         if (minionHit && minionHit.pvpTarget) damagePvpTarget(minionHit.pvpTarget, 44);
         const redMinionHpTotalAfter = pvpMinions.filter((minion) => minion.team === "red").reduce((sum, minion) => sum + (minion.hp || 0), 0);
         const pvpRifleHitsEnemyMinion = !!redMinion && minionHit && !!minionHit.pvpTarget && redMinionHpTotalAfter < redMinionHpTotalBefore;
+        coop.role = "host";
         player.x = 500;
         player.y = 500;
         player.hp = 100;
+        const actorTestWalls = walls.slice();
+        const actorTestDoors = doors.slice();
+        const actorTestMinions = pvpMinions.slice();
+        const actorTestTowers = pvpTowers.slice();
+        const actorTestBases = pvpBases.slice();
+        walls.length = 0;
+        doors.length = 0;
+        pvpMinions.length = 0;
+        pvpTowers.length = 0;
+        pvpBases.length = 0;
         const hostHpBefore = player.hp;
         const hostHit = raycastShot(700, 500, -1, 0, 400, "red");
         if (hostHit && hostHit.pvpTarget) damagePvpTarget(hostHit.pvpTarget, 44);
         const pvpGuestRifleHitsHost = hostHit && hostHit.pvpTarget === player && player.hp < hostHpBefore;
+        for (const wall of actorTestWalls) walls.push(wall);
+        for (const door of actorTestDoors) doors.push(door);
+        for (const minion of actorTestMinions) pvpMinions.push(minion);
+        for (const tower of actorTestTowers) pvpTowers.push(tower);
+        for (const base of actorTestBases) pvpBases.push(base);
         const towerHpBeforeSegment = redTower ? redTower.hp : 0;
         const segmentHit = redTower ? pvpBulletHit({ prevX: redTower.x - 200, prevY: redTower.y, x: redTower.x + 200, y: redTower.y, r: 4, team: "blue" }) : false;
         const pvpBulletSegmentHitsTower = !!redTower && segmentHit && redTower.hp < towerHpBeforeSegment;
@@ -10705,6 +10732,17 @@
         currentMapMode = "pvp";
         beginPvpCountdown();
         const pvpGuestCountdownStartsRed = player.x > world.w / 2 && Math.abs(player.angle - Math.PI) < 0.01 && coop.remote.team === "blue";
+        player.x = 1500;
+        player.y = 800;
+        player.hp = 100;
+        coop.remote = { x: 1320, y: 800, hp: 100, team: "blue", r: 24, collisionR: 15, last: performance.now(), weapon: "rifle" };
+        const guestShotHostHpBefore = coop.remote.hp;
+        const guestHostHit = raycastShot(player.x, player.y, -1, 0, 260);
+        if (guestHostHit && guestHostHit.pvpTarget) damagePvpTarget(guestHostHit.pvpTarget, 44);
+        const pvpGuestDefaultShotHitsHost = guestHostHit && guestHostHit.pvpTarget === coop.remote && coop.remote.hp < guestShotHostHpBefore;
+        const redMinionActorTarget = nearestPvpTarget({ team: "red", x: 1430, y: 800, r: 13, hp: 90 }, 180);
+        const pvpGuestRedMinionsTargetHost = redMinionActorTarget === coop.remote;
+        const pvpRemoteShownAsEnemyForGuest = remotePvpTeam(coop.remote) === "blue" && localPvpTeam() === "red";
         finishPvpRound("red");
         leavePvpRoundLocal(false);
         const pvpLeaveReturnsSingleMode = currentMapMode === "default" && state === "play" && !pvpWinner;
@@ -10848,6 +10886,9 @@
           pvpRestartReturnsCountdown,
           pvpGuestMapSyncDoesNotRespawn,
           pvpGuestCountdownStartsRed,
+          pvpGuestDefaultShotHitsHost,
+          pvpGuestRedMinionsTargetHost,
+          pvpRemoteShownAsEnemyForGuest,
           pvpLeaveReturnsSingleMode
         };
       } finally {
