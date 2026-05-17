@@ -107,8 +107,8 @@
     const ctx = canvas.getContext("2d");
     const loading = document.getElementById("loading");
     const BUILD_KIND = "NETWORK VERSION";
-    const BUILD_VERSION = "2.1.67";
-    const BUILD_TIMESTAMP = "2026-05-17 03:43:00 KST";
+    const BUILD_VERSION = "2.1.68";
+    const BUILD_TIMESTAMP = "2026-05-17 04:04:00 KST";
     const PLAYER_SPEED_SCALE = 0.8;
     const ENEMY_SPEED_SCALE = 0.8;
     const CAMERA_ZOOM_SCALE = 0.9;
@@ -1630,6 +1630,9 @@
         const start = pvpSpawnForLocalPlayer();
         player.x = start.x;
         player.y = start.y;
+        player.hp = 100;
+        player.stamina = 100;
+        player.invuln = Math.max(player.invuln || 0, 0.8);
         player.angle = start.angle;
         player.targetAngle = start.angle;
         pvpGuestPlacedFromMap = true;
@@ -3013,6 +3016,9 @@
       const remoteStart = pvpSpawnForTeam(remoteTeam);
       player.x = localStart.x;
       player.y = localStart.y;
+      player.hp = 100;
+      player.stamina = 100;
+      player.invuln = Math.max(player.invuln || 0, 0.8);
       player.angle = localStart.angle;
       player.targetAngle = localStart.angle;
       if (coop.remote) {
@@ -3020,6 +3026,8 @@
         coop.remote.y = remoteStart.y;
         coop.remote.tx = remoteStart.x;
         coop.remote.ty = remoteStart.y;
+        coop.remote.hp = 100;
+        coop.remote.invuln = Math.max(coop.remote.invuln || 0, 0.8);
         coop.remote.team = remoteTeam;
       }
       pvpCountdown = 3.25;
@@ -8096,7 +8104,10 @@
       }
       remote.angleTarget = Number(data.angle) || 0;
       remote.angle = Number.isFinite(remote.angle) ? remote.angle : remote.angleTarget;
-      remote.hp = Math.max(0, Math.min(100, Number(data.hp) || 0));
+      const incomingHp = Number(data.hp);
+      remote.hp = Number.isFinite(incomingHp)
+        ? Math.max(0, Math.min(100, incomingHp))
+        : (Number.isFinite(remote.hp) ? remote.hp : 100);
       remote.r = 24;
       remote.collisionR = 15;
       remote.weapon = data.weapon || "rifle";
@@ -8345,10 +8356,16 @@
         coop.worldSeq = data.seq;
         coop.worldRecvAt = performance.now();
         if (state !== "play" && state !== "dead") state = "play";
+        const wasPvpMode = currentMapMode === "pvp";
         currentMapMode = data.mapMode === "pvp" ? "pvp" : "default";
         pvpCountdown = Number.isFinite(data.pvpCountdown) ? Math.max(0, Number(data.pvpCountdown)) : pvpCountdown;
         pvpWinner = typeof data.pvpWinner === "string" ? data.pvpWinner : "";
         pvpRoundActive = !!data.pvpRoundActive;
+        if (currentMapMode === "pvp" && (!wasPvpMode || pvpCountdown > 0) && player.hp <= 0) {
+          player.hp = 100;
+          player.stamina = 100;
+          player.invuln = Math.max(player.invuln || 0, 0.8);
+        }
         kills = Number.isFinite(data.kills) ? data.kills : kills;
         wave = Number.isFinite(data.wave) ? data.wave : wave;
         fixtureBoost = Number.isFinite(data.fixtureBoost) ? data.fixtureBoost : fixtureBoost;
@@ -10705,6 +10722,10 @@
         beginPvpCountdown();
         const pvpHostStartsBlue = player.x < world.w / 2 && player.angle === 0;
         const pvpGuestStartsRed = coop.remote.x > world.w / 2 && coop.remote.team === "red";
+        const pvpCountdownRestoresRemoteHp = coop.remote.hp === 100 && player.hp === 100;
+        coop.remote.hp = 77;
+        coopApplyRemotePeerState({ x: coop.remote.x + 3, y: coop.remote.y + 2, angle: 0, team: "red", weapon: "rifle" });
+        const remoteStateMissingHpPreservesHp = coop.remote.hp === 77;
         const countdownBefore = pvpCountdown;
         const frozenMinion = pvpMinions[0] ? { x: pvpMinions[0].x, y: pvpMinions[0].y } : { x: 0, y: 0 };
         updatePvp(0.5);
@@ -10730,8 +10751,10 @@
         const pvpGuestMapSyncDoesNotRespawn = Math.abs(player.x - (guestSpawnX - 180)) < 0.01;
         coop.remote = { x: 500, y: 500, hp: 100, r: 24, collisionR: 15, last: performance.now(), weapon: "rifle" };
         currentMapMode = "pvp";
+        player.hp = 0;
         beginPvpCountdown();
         const pvpGuestCountdownStartsRed = player.x > world.w / 2 && Math.abs(player.angle - Math.PI) < 0.01 && coop.remote.team === "blue";
+        const pvpGuestCountdownRestoresHp = player.hp === 100 && coop.remote.hp === 100;
         player.x = 1500;
         player.y = 800;
         player.hp = 100;
@@ -10879,6 +10902,8 @@
           pvpBulletSegmentHitsTower,
           pvpHostStartsBlue,
           pvpGuestStartsRed,
+          pvpCountdownRestoresRemoteHp,
+          remoteStateMissingHpPreservesHp,
           pvpCountdownBlocksStart,
           pvpRoundActivatesAfterCountdown,
           pvpBaseDestroyedEndsRound,
@@ -10886,6 +10911,7 @@
           pvpRestartReturnsCountdown,
           pvpGuestMapSyncDoesNotRespawn,
           pvpGuestCountdownStartsRed,
+          pvpGuestCountdownRestoresHp,
           pvpGuestDefaultShotHitsHost,
           pvpGuestRedMinionsTargetHost,
           pvpRemoteShownAsEnemyForGuest,
